@@ -32,15 +32,20 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import TaskItem from "@tiptap/extension-task-item";
 import TaskList from "@tiptap/extension-task-list";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
 import {
   approveAiAction,
   createAiRun,
+  createAiRunFromOperatorPlan,
   defaultNodiaryState,
   insertBlockFromSlash,
+  moveBlock,
+  moveCalendarEvent,
+  moveDatabaseRow,
+  movePageNode,
   rejectAiAction,
   selectCalendarDate,
   switchDatabaseView,
@@ -50,6 +55,7 @@ import {
   type DatabaseRow,
   type DatabaseViewType,
   type NodiaryBlock,
+  type OperatorPlanDraft,
   type PageNode,
   type SlashInsertType
 } from "./nodiary-model";
@@ -96,15 +102,45 @@ export function NodiaryWorkspace() {
     setSlashOpen(false);
   }
 
-  function sendAiCommand() {
+  async function sendAiCommand() {
     const command = aiInput.trim();
 
     if (!command) {
       return;
     }
 
-    setState((current) => createAiRun(current, command));
     setAiInput("");
+
+    try {
+      const response = await fetch("/api/ai/operator", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          command,
+          pageTitle: state.activePage.title,
+          selectedText: "",
+          memory: state.ai.memories.map((memory) => memory.content)
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error("AI operator route failed");
+      }
+
+      const payload = (await response.json()) as { plan?: OperatorPlanDraft };
+
+      if (!payload.plan) {
+        throw new Error("AI operator route returned no plan");
+      }
+
+      setState((current) =>
+        createAiRunFromOperatorPlan(current, command, payload.plan as OperatorPlanDraft)
+      );
+    } catch {
+      setState((current) => createAiRun(current, command));
+    }
   }
 
   return (
@@ -120,6 +156,17 @@ export function NodiaryWorkspace() {
         className="hidden lg:flex"
         onCalendarDateSelect={(isoDate) =>
           setState((current) => selectCalendarDate(current, isoDate))
+        }
+        onCalendarEventMove={(eventId, isoDate) =>
+          setState((current) =>
+            moveCalendarEvent(current, eventId, {
+              date: isoDate,
+              time: "16:30"
+            })
+          )
+        }
+        onMovePageNode={(nodeId, parentNodeId, index) =>
+          setState((current) => movePageNode(current, nodeId, parentNodeId, index))
         }
         onOpenSettings={() => setSettingsOpen(true)}
         onQuickCapture={(value) => setQuickCapture(value)}
@@ -141,6 +188,14 @@ export function NodiaryWorkspace() {
             blocks={state.activePage.blocks}
             documentWidthClass={documentWidthClass}
             isSlashOpen={isSlashOpen}
+            onMoveBlock={(blockId, beforeBlockId) =>
+              setState((current) => moveBlock(current, blockId, beforeBlockId))
+            }
+            onMoveDatabaseRow={(databaseBlockId, rowId, patch) =>
+              setState((current) =>
+                moveDatabaseRow(current, databaseBlockId, rowId, patch)
+              )
+            }
             onOpenSlash={() => setSlashOpen((open) => !open)}
             onSlashInsert={insertSlashBlock}
             onSwitchDatabaseView={(blockId, view) =>
@@ -183,6 +238,17 @@ export function NodiaryWorkspace() {
             onCalendarDateSelect={(isoDate) =>
               setState((current) => selectCalendarDate(current, isoDate))
             }
+            onCalendarEventMove={(eventId, isoDate) =>
+              setState((current) =>
+                moveCalendarEvent(current, eventId, {
+                  date: isoDate,
+                  time: "16:30"
+                })
+              )
+            }
+            onMovePageNode={(nodeId, parentNodeId, index) =>
+              setState((current) => movePageNode(current, nodeId, parentNodeId, index))
+            }
             onOpenSettings={() => setSettingsOpen(true)}
             onQuickCapture={(value) => setQuickCapture(value)}
             onSelectPage={(pageId) => {
@@ -219,6 +285,8 @@ type SidebarProps = {
   quickCapture: string;
   state: ReturnType<typeof defaultNodiaryState>;
   onCalendarDateSelect: (isoDate: string) => void;
+  onCalendarEventMove: (eventId: string, isoDate: string) => void;
+  onMovePageNode: (nodeId: string, parentNodeId: string, index: number) => void;
   onOpenSettings: () => void;
   onQuickCapture: (value: string) => void;
   onSelectPage: (pageId: string) => void;
@@ -228,6 +296,8 @@ function NodiarySidebar({
   activePageId,
   className,
   onCalendarDateSelect,
+  onCalendarEventMove,
+  onMovePageNode,
   onOpenSettings,
   onQuickCapture,
   onSelectPage,
@@ -272,6 +342,7 @@ function NodiarySidebar({
         </div>
         <MiniCalendar
           onSelectDate={onCalendarDateSelect}
+          onEventDrop={onCalendarEventMove}
           selectedDate={state.sidebarCalendar.selectedDate}
           days={state.sidebarCalendar.days}
           monthLabel={state.sidebarCalendar.monthLabel}
@@ -279,8 +350,17 @@ function NodiarySidebar({
         <div className="mt-3 space-y-2 px-1">
           {state.sidebarCalendar.schedule.map((event) => (
             <button
+              aria-label={`일정 드래그: ${event.title}`}
               key={event.id}
               className="flex w-full items-start gap-2 rounded-md bg-[#ebe7df] px-2.5 py-2 text-left hover:bg-white"
+              draggable
+              onDragStart={(dragEvent) => {
+                dragEvent.dataTransfer.setData(
+                  "text/nodiary-calendar-event",
+                  event.id
+                );
+                dragEvent.dataTransfer.setData("text/plain", event.id);
+              }}
               type="button"
             >
               <span className="min-w-[44px] text-[12px] font-semibold text-[#3a3630]">
@@ -288,6 +368,11 @@ function NodiarySidebar({
               </span>
               <span className="min-w-0 text-[12px] leading-5 text-[#6f6a61]">
                 {event.title}
+                {event.conflictRisk ? (
+                  <span className="ml-2 rounded bg-[#fff3e2] px-1.5 py-0.5 text-[10px] font-semibold text-[#9a5a1f]">
+                    {event.conflictRisk} risk
+                  </span>
+                ) : null}
               </span>
             </button>
           ))}
@@ -313,6 +398,7 @@ function NodiarySidebar({
               activePageId={activePageId}
               key={node.id}
               node={node}
+              onMovePageNode={onMovePageNode}
               onSelectPage={onSelectPage}
             />
           ))}
@@ -375,11 +461,13 @@ function SidebarUtilityRow({
 function PageTreeRow({
   activePageId,
   node,
+  onMovePageNode,
   onSelectPage,
   depth = 0
 }: {
   activePageId: string;
   node: PageNode;
+  onMovePageNode: (nodeId: string, parentNodeId: string, index: number) => void;
   onSelectPage: (pageId: string) => void;
   depth?: number;
 }) {
@@ -387,25 +475,51 @@ function PageTreeRow({
   const ChevronIcon = node.expanded ? ChevronDown : ChevronRight;
 
   return (
-    <div>
-      <button
+    <div
+      aria-label={`페이지 드롭 위치: ${node.title}`}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => {
+        event.preventDefault();
+        const draggedNodeId =
+          event.dataTransfer.getData("text/nodiary-page") ||
+          event.dataTransfer.getData("text/plain");
+
+        if (draggedNodeId) {
+          onMovePageNode(draggedNodeId, node.id, node.children?.length ?? 0);
+        }
+      }}
+    >
+      <div
         className={cn(
           "flex h-8 w-full items-center gap-1 rounded-md pr-2 text-left text-[13px] text-[#7c766d] hover:bg-white hover:text-[#24211d]",
           activePageId === node.id && "bg-[#ebe7df] font-medium text-[#24211d]"
         )}
-        onClick={() => onSelectPage(node.id)}
         style={{ paddingLeft: 8 + depth * 18 }}
-        type="button"
       >
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+        <button
+          aria-label={`페이지 드래그: ${node.title}`}
+          className="flex h-6 w-5 shrink-0 items-center justify-center rounded text-[#aaa399] hover:bg-[#f7f5f0] hover:text-[#6f6a61]"
+          draggable
+          onDragStart={(event) => {
+            event.dataTransfer.setData("text/nodiary-page", node.id);
+            event.dataTransfer.setData("text/plain", node.id);
+          }}
+          type="button"
+        >
           {hasChildren ? (
             <ChevronIcon className="h-4 w-4" aria-hidden="true" />
           ) : (
-            <span className="h-1 w-1 rounded-full bg-current opacity-60" />
+            <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
           )}
-        </span>
-        <span className="min-w-0 truncate leading-none">{node.title}</span>
-      </button>
+        </button>
+        <button
+          className="min-w-0 flex-1 truncate text-left leading-none"
+          onClick={() => onSelectPage(node.id)}
+          type="button"
+        >
+          {node.title}
+        </button>
+      </div>
       {node.expanded && node.children
         ? node.children.map((child) => (
             <PageTreeRow
@@ -413,6 +527,7 @@ function PageTreeRow({
               depth={depth + 1}
               key={child.id}
               node={child}
+              onMovePageNode={onMovePageNode}
               onSelectPage={onSelectPage}
             />
           ))
@@ -424,11 +539,13 @@ function PageTreeRow({
 function MiniCalendar({
   days,
   monthLabel,
+  onEventDrop,
   onSelectDate
 }: {
   days: ReturnType<typeof defaultNodiaryState>["sidebarCalendar"]["days"];
   monthLabel: string;
   selectedDate: string;
+  onEventDrop?: (eventId: string, isoDate: string) => void;
   onSelectDate: (isoDate: string) => void;
 }) {
   return (
@@ -455,6 +572,17 @@ function MiniCalendar({
             )}
             key={day.id}
             onClick={() => onSelectDate(day.isoDate)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault();
+              const eventId =
+                event.dataTransfer.getData("text/nodiary-calendar-event") ||
+                event.dataTransfer.getData("text/plain");
+
+              if (eventId) {
+                onEventDrop?.(eventId, day.isoDate);
+              }
+            }}
             role="button"
             type="button"
           >
@@ -537,6 +665,8 @@ function DocumentCanvas({
   blocks,
   documentWidthClass,
   isSlashOpen,
+  onMoveBlock,
+  onMoveDatabaseRow,
   onOpenSlash,
   onSlashInsert,
   onSwitchDatabaseView,
@@ -549,6 +679,12 @@ function DocumentCanvas({
   pageProperties: ReturnType<typeof defaultNodiaryState>["activePage"]["properties"];
   pageTitle: string;
   slashOpen: boolean;
+  onMoveBlock: (blockId: string, beforeBlockId: string) => void;
+  onMoveDatabaseRow: (
+    databaseBlockId: string,
+    rowId: string,
+    patch: Parameters<typeof moveDatabaseRow>[3]
+  ) => void;
   onOpenSlash: () => void;
   onSlashInsert: (type: SlashInsertType) => void;
   onSwitchDatabaseView: (blockId: string, view: DatabaseViewType) => void;
@@ -576,6 +712,8 @@ function DocumentCanvas({
           <DocumentBlock
             block={block}
             key={block.id}
+            onMoveBlock={onMoveBlock}
+            onMoveDatabaseRow={onMoveDatabaseRow}
             onSwitchDatabaseView={onSwitchDatabaseView}
           />
         ))}
@@ -598,18 +736,49 @@ function DocumentCanvas({
 
 function DocumentBlock({
   block,
+  onMoveBlock,
+  onMoveDatabaseRow,
   onSwitchDatabaseView
 }: {
   block: NodiaryBlock;
+  onMoveBlock: (blockId: string, beforeBlockId: string) => void;
+  onMoveDatabaseRow: (
+    databaseBlockId: string,
+    rowId: string,
+    patch: Parameters<typeof moveDatabaseRow>[3]
+  ) => void;
   onSwitchDatabaseView: (blockId: string, view: DatabaseViewType) => void;
 }) {
   return (
     <div
+      aria-label={`블록 드롭 위치: ${getBlockLabel(block)}`}
       className="group grid min-h-9 grid-cols-[28px_1fr] items-start gap-2 rounded-md"
-      draggable
+      data-testid="document-block"
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => {
+        event.preventDefault();
+        const blockId =
+          event.dataTransfer.getData("text/nodiary-block") ||
+          event.dataTransfer.getData("text/plain");
+
+        if (blockId) {
+          onMoveBlock(blockId, block.id);
+        }
+      }}
     >
       <div className="flex h-9 items-center justify-center text-[#c0bab0] opacity-0 group-hover:opacity-100">
-        <GripVertical className="h-4 w-4" aria-hidden="true" />
+        <button
+          aria-label={`블록 드래그: ${getBlockLabel(block)}`}
+          className="flex h-7 w-7 items-center justify-center rounded hover:bg-[#f7f5f0] hover:text-[#6f6a61]"
+          draggable
+          onDragStart={(event) => {
+            event.dataTransfer.setData("text/nodiary-block", block.id);
+            event.dataTransfer.setData("text/plain", block.id);
+          }}
+          type="button"
+        >
+          <GripVertical className="h-4 w-4" aria-hidden="true" />
+        </button>
       </div>
       <div className="min-w-0">
         {block.type === "heading" ? (
@@ -633,6 +802,7 @@ function DocumentBlock({
           <DatabaseViewBlock
             blockId={block.id}
             database={block.database}
+            onMoveRow={onMoveDatabaseRow}
             onSwitchView={onSwitchDatabaseView}
           />
         ) : null}
@@ -645,6 +815,14 @@ function DocumentBlock({
       </div>
     </div>
   );
+}
+
+function getBlockLabel(block: NodiaryBlock) {
+  if (block.id === "memo-body") {
+    return "메모 본문";
+  }
+
+  return block.title ?? block.text?.slice(0, 24) ?? block.id;
 }
 
 function RichTextBlock({
@@ -664,6 +842,16 @@ function RichTextBlock({
     editable: true,
     immediatelyRender: false
   });
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    editor.commands.setContent(`<p>${escapeHtml(text)}</p>`, {
+      emitUpdate: false
+    });
+  }, [editor, text]);
 
   return (
     <EditorContent
@@ -743,10 +931,16 @@ function SlashMenu({ onInsert }: { onInsert: (type: SlashInsertType) => void }) 
 function DatabaseViewBlock({
   blockId,
   database,
+  onMoveRow,
   onSwitchView
 }: {
   blockId: string;
   database: DatabaseBlock;
+  onMoveRow: (
+    databaseBlockId: string,
+    rowId: string,
+    patch: Parameters<typeof moveDatabaseRow>[3]
+  ) => void;
   onSwitchView: (blockId: string, view: DatabaseViewType) => void;
 }) {
   return (
@@ -786,7 +980,13 @@ function DatabaseViewBlock({
       {database.activeView === "table" ? (
         <DatabaseTable database={database} />
       ) : null}
-      {database.activeView === "board" ? <DatabaseBoard rows={database.rows} /> : null}
+      {database.activeView === "board" ? (
+        <DatabaseBoard
+          blockId={blockId}
+          onMoveRow={onMoveRow}
+          rows={database.rows}
+        />
+      ) : null}
       {database.activeView === "calendar" ? (
         <DatabaseCalendar rows={database.rows} />
       ) : null}
@@ -831,7 +1031,19 @@ function DatabaseTable({ database }: { database: DatabaseBlock }) {
   );
 }
 
-function DatabaseBoard({ rows }: { rows: DatabaseRow[] }) {
+function DatabaseBoard({
+  blockId,
+  onMoveRow,
+  rows
+}: {
+  blockId: string;
+  rows: DatabaseRow[];
+  onMoveRow: (
+    databaseBlockId: string,
+    rowId: string,
+    patch: Parameters<typeof moveDatabaseRow>[3]
+  ) => void;
+}) {
   const groups = useMemo(
     () =>
       (["backlog", "doing", "review", "done"] as const).map((status) => ({
@@ -844,7 +1056,25 @@ function DatabaseBoard({ rows }: { rows: DatabaseRow[] }) {
   return (
     <div className="grid grid-cols-1 gap-3 p-3 md:grid-cols-4">
       {groups.map((group) => (
-        <section className="min-h-28 rounded border border-[#eeeae3] bg-[#fbfaf7] p-2" key={group.status}>
+        <section
+          aria-label={`DB 상태 드롭: ${databaseStatusLabel[group.status]}`}
+          className="min-h-28 rounded border border-[#eeeae3] bg-[#fbfaf7] p-2"
+          key={group.status}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
+            event.preventDefault();
+            const rowId =
+              event.dataTransfer.getData("text/nodiary-db-row") ||
+              event.dataTransfer.getData("text/plain");
+
+            if (rowId) {
+              onMoveRow(blockId, rowId, {
+                status: group.status,
+                index: 0
+              });
+            }
+          }}
+        >
           <div className="mb-2 flex items-center gap-2 text-[12px] font-semibold text-[#6f6a61]">
             <Circle className="h-3 w-3" aria-hidden="true" />
             {databaseStatusLabel[group.status]}
@@ -852,9 +1082,14 @@ function DatabaseBoard({ rows }: { rows: DatabaseRow[] }) {
           <div className="space-y-2">
             {group.rows.map((row) => (
               <article
+                aria-label={`DB 행 드래그: ${row.title}`}
                 className="rounded border border-[#dedad1] bg-white px-2 py-2 text-[12px] shadow-[0_1px_1px_rgba(36,33,29,0.04)]"
                 draggable
                 key={row.id}
+                onDragStart={(event) => {
+                  event.dataTransfer.setData("text/nodiary-db-row", row.id);
+                  event.dataTransfer.setData("text/plain", row.id);
+                }}
               >
                 <div className="font-medium text-[#24211d]">{row.title}</div>
                 <div className="mt-2 text-[#8c867c]">{row.date}</div>

@@ -71,6 +71,8 @@ export type CalendarEvent = {
   time: string;
   title: string;
   source: "nodiary" | "google" | "apple";
+  date?: string;
+  conflictRisk?: RiskLevel;
 };
 
 export type SidebarCalendar = {
@@ -94,6 +96,10 @@ export type AiProposedAction = {
   applyPayload: {
     insertAfterBlockId?: string;
     blocks?: NodiaryBlock[];
+    operation?: {
+      toolName: string;
+      argsJson: Record<string, unknown>;
+    };
   };
 };
 
@@ -145,6 +151,18 @@ export type NodiaryState = {
   sidebarCalendar: SidebarCalendar;
   ai: AiState;
   preferences: AppPreference;
+};
+
+export type OperatorPlanDraft = {
+  summary: string;
+  actions: Array<{
+    toolName: string;
+    argsJson?: Record<string, unknown>;
+    diffJson?: unknown;
+    riskLevel?: RiskLevel;
+    undoJson?: Record<string, unknown>;
+  }>;
+  memories?: string[];
 };
 
 const projectDatabase: DatabaseBlock = {
@@ -367,6 +385,161 @@ export function selectCalendarDate(
   };
 }
 
+export function moveBlock(
+  state: NodiaryState,
+  blockId: string,
+  beforeBlockId: string
+): NodiaryState {
+  if (blockId === beforeBlockId) {
+    return state;
+  }
+
+  const movingBlock = state.activePage.blocks.find((block) => block.id === blockId);
+
+  if (!movingBlock) {
+    return state;
+  }
+
+  const remainingBlocks = state.activePage.blocks.filter(
+    (block) => block.id !== blockId
+  );
+  const beforeIndex = remainingBlocks.findIndex(
+    (block) => block.id === beforeBlockId
+  );
+  const insertIndex = beforeIndex >= 0 ? beforeIndex : remainingBlocks.length;
+
+  return {
+    ...state,
+    activePage: {
+      ...state.activePage,
+      blocks: [
+        ...remainingBlocks.slice(0, insertIndex),
+        movingBlock,
+        ...remainingBlocks.slice(insertIndex)
+      ]
+    }
+  };
+}
+
+export function movePageNode(
+  state: NodiaryState,
+  nodeId: string,
+  parentNodeId: string,
+  index: number
+): NodiaryState {
+  if (nodeId === parentNodeId || isDescendantPageNode(state.pageTree, nodeId, parentNodeId)) {
+    return state;
+  }
+
+  const { nodes: treeWithoutNode, removed } = removePageNode(state.pageTree, nodeId);
+
+  if (!removed) {
+    return state;
+  }
+
+  const insertedTree = insertPageNode(treeWithoutNode, parentNodeId, removed, index);
+
+  if (!insertedTree.inserted) {
+    return state;
+  }
+
+  return {
+    ...state,
+    pageTree: insertedTree.nodes
+  };
+}
+
+export function moveDatabaseRow(
+  state: NodiaryState,
+  databaseBlockId: string,
+  rowId: string,
+  patch: Partial<Pick<DatabaseRow, "status" | "date" | "owner" | "title">> & {
+    index?: number;
+  }
+): NodiaryState {
+  return {
+    ...state,
+    activePage: {
+      ...state.activePage,
+      blocks: state.activePage.blocks.map((block) => {
+        if (block.id !== databaseBlockId || !block.database) {
+          return block;
+        }
+
+        const row = block.database.rows.find((candidate) => candidate.id === rowId);
+
+        if (!row) {
+          return block;
+        }
+
+        const updatedRow: DatabaseRow = {
+          ...row,
+          ...(patch.title ? { title: patch.title } : {}),
+          ...(patch.status ? { status: patch.status } : {}),
+          ...(patch.owner ? { owner: patch.owner } : {}),
+          ...(patch.date ? { date: patch.date } : {})
+        };
+        const remainingRows = block.database.rows.filter(
+          (candidate) => candidate.id !== rowId
+        );
+        const rows = insertDatabaseRowAtStatusIndex(
+          remainingRows,
+          updatedRow,
+          patch.index
+        );
+
+        return {
+          ...block,
+          database: {
+            ...block.database,
+            rows
+          }
+        };
+      })
+    }
+  };
+}
+
+export function moveCalendarEvent(
+  state: NodiaryState,
+  eventId: string,
+  patch: {
+    date: string;
+    time?: string;
+  }
+): NodiaryState {
+  const event = findCalendarEvent(state, eventId);
+
+  if (!event) {
+    return state;
+  }
+
+  const targetSchedule = getScheduleForDate(patch.date).filter(
+    (candidate) => candidate.id !== eventId && !candidate.id.startsWith("schedule-empty-")
+  );
+  const conflictRisk = getCalendarMoveRisk(event, targetSchedule);
+  const movedEvent: CalendarEvent = {
+    ...event,
+    date: patch.date,
+    time: patch.time ?? event.time,
+    conflictRisk
+  };
+
+  return {
+    ...state,
+    sidebarCalendar: {
+      ...state.sidebarCalendar,
+      selectedDate: patch.date,
+      days: state.sidebarCalendar.days.map((day) => ({
+        ...day,
+        isSelected: day.isoDate === patch.date,
+        hasEvent: day.isoDate === patch.date ? true : day.hasEvent
+      })),
+      schedule: [movedEvent, ...targetSchedule]
+    }
+  };
+}
+
 export function createAiRun(state: NodiaryState, command: string): NodiaryState {
   const insertedBlocks: NodiaryBlock[] = [
     {
@@ -414,6 +587,75 @@ export function createAiRun(state: NodiaryState, command: string): NodiaryState 
   };
 }
 
+export function createAiRunFromOperatorPlan(
+  state: NodiaryState,
+  command: string,
+  plan: OperatorPlanDraft
+): NodiaryState {
+  const runNumber = state.ai.runs.length + 1;
+  const actions: AiProposedAction[] = plan.actions.map((action, index) => {
+    const summary = `${plan.summary} (${action.toolName})`;
+    const diff = formatOperatorDiff(action.diffJson);
+    const actionId = `operator-action-${runNumber}-${index + 1}`;
+    const fallbackBlockId = `operator-result-${runNumber}-${index + 1}`;
+    const restoreBlocks = getOperatorRestoreBlocks(state, action.argsJson ?? {});
+
+    return {
+      id: actionId,
+      toolName: action.toolName,
+      summary,
+      diff,
+      riskLevel: action.riskLevel ?? "medium",
+      approvalStatus: "pending",
+      applyPayload: {
+        insertAfterBlockId: "owner-note",
+        operation: {
+          toolName: action.toolName,
+          argsJson: action.argsJson ?? {}
+        },
+        blocks: [
+          {
+            id: fallbackBlockId,
+            type: "callout",
+            text: `AI 승인 실행 기록: ${plan.summary}`
+          }
+        ]
+      },
+      undoPayload: {
+        ...(action.undoJson ?? {}),
+        removeBlockIds: [fallbackBlockId],
+        restoreBlocks
+      }
+    };
+  });
+  const run: AiRun = {
+    id: `operator-run-${runNumber}`,
+    command,
+    status: "awaiting_approval",
+    modelRoute: command.length > 120 ? "large-context" : "planner",
+    actions
+  };
+  const memories = [
+    ...(plan.memories ?? []).map((content, index) => ({
+      id: `memory-${state.ai.memories.length + index + 1}`,
+      content,
+      source: "openai-operator",
+      confidence: 0.82
+    })),
+    ...state.ai.memories
+  ];
+
+  return {
+    ...state,
+    ai: {
+      ...state.ai,
+      panelInput: "",
+      runs: [run, ...state.ai.runs],
+      memories
+    }
+  };
+}
+
 export function approveAiAction(
   state: NodiaryState,
   actionId: string
@@ -424,25 +666,12 @@ export function approveAiAction(
     return state;
   }
 
-  const insertAfterBlockId = action.applyPayload.insertAfterBlockId;
-  const insertBlocks = action.applyPayload.blocks ?? [];
-  const afterIndex = state.activePage.blocks.findIndex(
-    (block) => block.id === insertAfterBlockId
-  );
-  const insertIndex = afterIndex >= 0 ? afterIndex + 1 : state.activePage.blocks.length;
+  const appliedState = applyAiActionPayload(state, action);
 
   return {
-    ...state,
-    activePage: {
-      ...state.activePage,
-      blocks: [
-        ...state.activePage.blocks.slice(0, insertIndex),
-        ...insertBlocks,
-        ...state.activePage.blocks.slice(insertIndex)
-      ]
-    },
+    ...appliedState,
     ai: {
-      ...state.ai,
+      ...appliedState.ai,
       runs: updateAiAction(state.ai.runs, actionId, {
         approvalStatus: "approved"
       }),
@@ -474,12 +703,19 @@ export function undoLastAiAction(state: NodiaryState): NodiaryState {
   }
 
   const removeIds = new Set(lastAction.undoPayload.removeBlockIds ?? []);
+  const restoreBlocks = lastAction.undoPayload.restoreBlocks ?? [];
 
   return {
     ...state,
     activePage: {
       ...state.activePage,
-      blocks: state.activePage.blocks.filter((block) => !removeIds.has(block.id))
+      blocks: restoreBlocks.reduce(
+        (blocks, restoreBlock) =>
+          blocks.map((block) =>
+            block.id === restoreBlock.id ? restoreBlock : block
+          ),
+        state.activePage.blocks.filter((block) => !removeIds.has(block.id))
+      )
     },
     ai: {
       ...state.ai,
@@ -626,6 +862,375 @@ function getScheduleForDate(isoDate: string): CalendarEvent[] {
       }
     ]
   );
+}
+
+function insertDatabaseRowAtStatusIndex(
+  rows: DatabaseRow[],
+  row: DatabaseRow,
+  index = rows.length
+): DatabaseRow[] {
+  const sameStatusIndexes = rows.reduce<number[]>((indexes, candidate, rowIndex) => {
+    if (candidate.status === row.status) {
+      indexes.push(rowIndex);
+    }
+
+    return indexes;
+  }, []);
+  const boundedIndex = Math.max(0, Math.min(index, sameStatusIndexes.length));
+  const insertIndex =
+    sameStatusIndexes[boundedIndex] ?? sameStatusIndexes.at(-1) ?? rows.length;
+  const resolvedIndex =
+    sameStatusIndexes.length > 0 && boundedIndex >= sameStatusIndexes.length
+      ? insertIndex + 1
+      : insertIndex;
+
+  return [
+    ...rows.slice(0, resolvedIndex),
+    row,
+    ...rows.slice(resolvedIndex)
+  ];
+}
+
+function removePageNode(
+  nodes: PageNode[],
+  nodeId: string
+): {
+  nodes: PageNode[];
+  removed?: PageNode;
+} {
+  let removed: PageNode | undefined;
+  const nextNodes = nodes.flatMap((node) => {
+    if (node.id === nodeId) {
+      removed = node;
+      return [];
+    }
+
+    if (!node.children) {
+      return [node];
+    }
+
+    const result = removePageNode(node.children, nodeId);
+
+    if (result.removed) {
+      removed = result.removed;
+    }
+
+    return [
+      {
+        ...node,
+        children: result.nodes
+      }
+    ];
+  });
+
+  return {
+    nodes: nextNodes,
+    removed
+  };
+}
+
+function insertPageNode(
+  nodes: PageNode[],
+  parentNodeId: string,
+  node: PageNode,
+  index: number
+): {
+  nodes: PageNode[];
+  inserted: boolean;
+} {
+  let inserted = false;
+  const nextNodes = nodes.map((candidate) => {
+    if (candidate.id === parentNodeId) {
+      const children = candidate.children ?? [];
+      const insertIndex = Math.max(0, Math.min(index, children.length));
+      inserted = true;
+
+      return {
+        ...candidate,
+        expanded: true,
+        children: [
+          ...children.slice(0, insertIndex),
+          node,
+          ...children.slice(insertIndex)
+        ]
+      };
+    }
+
+    if (!candidate.children) {
+      return candidate;
+    }
+
+    const result = insertPageNode(candidate.children, parentNodeId, node, index);
+
+    if (result.inserted) {
+      inserted = true;
+    }
+
+    return {
+      ...candidate,
+      children: result.nodes
+    };
+  });
+
+  return {
+    nodes: nextNodes,
+    inserted
+  };
+}
+
+function isDescendantPageNode(
+  nodes: PageNode[],
+  nodeId: string,
+  possibleDescendantId: string
+): boolean {
+  const node = findPageNode(nodes, nodeId);
+
+  if (!node?.children) {
+    return false;
+  }
+
+  return Boolean(findPageNode(node.children, possibleDescendantId));
+}
+
+function findPageNode(nodes: PageNode[], nodeId: string): PageNode | undefined {
+  for (const node of nodes) {
+    if (node.id === nodeId) {
+      return node;
+    }
+
+    if (node.children) {
+      const child = findPageNode(node.children, nodeId);
+
+      if (child) {
+        return child;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function findCalendarEvent(
+  state: NodiaryState,
+  eventId: string
+): CalendarEvent | undefined {
+  const visibleEvent = state.sidebarCalendar.schedule.find(
+    (event) => event.id === eventId
+  );
+
+  if (visibleEvent) {
+    return visibleEvent;
+  }
+
+  for (const day of state.sidebarCalendar.days) {
+    const event = getScheduleForDate(day.isoDate).find(
+      (candidate) => candidate.id === eventId
+    );
+
+    if (event) {
+      return event;
+    }
+  }
+
+  return undefined;
+}
+
+function getOperatorRestoreBlocks(
+  state: NodiaryState,
+  args: Record<string, unknown>
+): NodiaryBlock[] {
+  const blockId = readStringArg(args, "blockId");
+
+  if (!blockId) {
+    return [];
+  }
+
+  const block = state.activePage.blocks.find((candidate) => candidate.id === blockId);
+
+  return block ? [block] : [];
+}
+
+function getCalendarMoveRisk(
+  event: CalendarEvent,
+  targetSchedule: CalendarEvent[]
+): RiskLevel {
+  if (
+    event.source === "google" ||
+    event.source === "apple" ||
+    targetSchedule.some((candidate) => candidate.source !== "nodiary")
+  ) {
+    return "high";
+  }
+
+  return targetSchedule.length > 0 ? "medium" : "low";
+}
+
+function applyAiActionPayload(
+  state: NodiaryState,
+  action: AiProposedAction
+): NodiaryState {
+  const operatedState = applyOperatorOperation(state, action);
+
+  if (operatedState !== state) {
+    return operatedState;
+  }
+
+  const insertAfterBlockId = action.applyPayload.insertAfterBlockId;
+  const insertBlocks = action.applyPayload.blocks ?? [];
+  const afterIndex = state.activePage.blocks.findIndex(
+    (block) => block.id === insertAfterBlockId
+  );
+  const insertIndex = afterIndex >= 0 ? afterIndex + 1 : state.activePage.blocks.length;
+
+  return {
+    ...state,
+    activePage: {
+      ...state.activePage,
+      blocks: [
+        ...state.activePage.blocks.slice(0, insertIndex),
+        ...insertBlocks,
+        ...state.activePage.blocks.slice(insertIndex)
+      ]
+    }
+  };
+}
+
+function applyOperatorOperation(
+  state: NodiaryState,
+  action: AiProposedAction
+): NodiaryState {
+  const operation = action.applyPayload.operation;
+
+  if (!operation) {
+    return state;
+  }
+
+  const args = operation.argsJson;
+
+  if (operation.toolName === "moveBlock") {
+    const blockId = readStringArg(args, "blockId");
+    const beforeBlockId = readStringArg(args, "beforeBlockId");
+
+    if (blockId && beforeBlockId) {
+      return moveBlock(state, blockId, beforeBlockId);
+    }
+  }
+
+  if (operation.toolName === "updateDatabaseRow") {
+    const databaseBlockId = readStringArg(args, "databaseBlockId") ?? "project-db";
+    const rowId = readStringArg(args, "rowId");
+
+    if (rowId) {
+      return moveDatabaseRow(state, databaseBlockId, rowId, {
+        status: readDatabaseStatusArg(args, "status"),
+        date: readStringArg(args, "date"),
+        owner: readStringArg(args, "owner"),
+        title: readStringArg(args, "title"),
+        index: readNumberArg(args, "index")
+      });
+    }
+  }
+
+  if (operation.toolName === "updateCalendarEvent") {
+    const eventId = readStringArg(args, "eventId");
+    const date = readStringArg(args, "date");
+
+    if (eventId && date) {
+      return moveCalendarEvent(state, eventId, {
+        date,
+        time: readStringArg(args, "time")
+      });
+    }
+  }
+
+  if (operation.toolName === "createDatabase") {
+    const afterBlockId = readStringArg(args, "afterBlockId") ?? "memo";
+
+    return insertBlockFromSlash(state, afterBlockId, "database");
+  }
+
+  if (operation.toolName === "updateBlock") {
+    const blockId = readStringArg(args, "blockId");
+
+    if (!blockId) {
+      return state;
+    }
+
+    return updateBlockTextFromArgs(state, blockId, args);
+  }
+
+  return state;
+}
+
+function updateBlockTextFromArgs(
+  state: NodiaryState,
+  blockId: string,
+  args: Record<string, unknown>
+): NodiaryState {
+  const text = readStringArg(args, "text") ?? readStringArg(args, "content");
+  const title = readStringArg(args, "title");
+
+  if (!text && !title) {
+    return state;
+  }
+
+  return {
+    ...state,
+    activePage: {
+      ...state.activePage,
+      blocks: state.activePage.blocks.map((block) => {
+        if (block.id !== blockId) {
+          return block;
+        }
+
+        return {
+          ...block,
+          text: text ?? block.text,
+          title: title ?? block.title
+        };
+      })
+    }
+  };
+}
+
+function readStringArg(
+  args: Record<string, unknown>,
+  key: string
+): string | undefined {
+  const value = args[key];
+
+  return typeof value === "string" ? value : undefined;
+}
+
+function readNumberArg(
+  args: Record<string, unknown>,
+  key: string
+): number | undefined {
+  const value = args[key];
+
+  return typeof value === "number" ? value : undefined;
+}
+
+function readDatabaseStatusArg(
+  args: Record<string, unknown>,
+  key: string
+): DatabaseRow["status"] | undefined {
+  const value = args[key];
+
+  return value === "backlog" ||
+    value === "doing" ||
+    value === "review" ||
+    value === "done"
+    ? value
+    : undefined;
+}
+
+function formatOperatorDiff(diffJson: unknown): string {
+  if (!diffJson || typeof diffJson !== "object") {
+    return "모델이 구조화된 diff를 제공하지 않았습니다.";
+  }
+
+  return JSON.stringify(diffJson, null, 2);
 }
 
 function findAiAction(
