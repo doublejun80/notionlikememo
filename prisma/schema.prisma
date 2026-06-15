@@ -1,0 +1,191 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum ProjectStatus {
+  PLANNED
+  ACTIVE
+  REVIEW
+  ARCHIVED
+}
+
+enum TaskStatus {
+  TODO
+  DOING
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum InboxStatus {
+  OPEN
+  TRIAGED
+  ARCHIVED
+}
+
+model Workspace {
+  id        String   @id
+  title     String
+  subtitle  String
+  locale    String   @default("ko-KR")
+  timezone  String   @default("Asia/Seoul")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projects       Project[]
+  tasks          Task[]
+  calendarEvents CalendarEvent[]
+  journalEntries JournalEntry[]
+  notes          Note[]
+  tags           Tag[]
+  inboxItems     InboxItem[]
+}
+
+model Project {
+  id          String        @id
+  workspaceId String
+  name        String
+  status      ProjectStatus @default(PLANNED)
+  summary     String
+  nextStep    String
+  progress    Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  tasks          Task[]
+  calendarEvents CalendarEvent[]
+  notes          Note[]
+
+  @@index([workspaceId])
+  @@index([status])
+}
+
+model Task {
+  id          String       @id
+  workspaceId String
+  projectId   String?
+  noteId      String?
+  title       String
+  status      TaskStatus   @default(TODO)
+  priority    TaskPriority @default(MEDIUM)
+  dueLabel    String
+  dueDateKey  String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  note      Note?     @relation(fields: [noteId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, status])
+  @@index([projectId])
+  @@index([noteId])
+  @@index([dueDateKey])
+}
+
+model CalendarEvent {
+  id              String    @id
+  workspaceId     String
+  projectId       String?
+  title           String
+  dateKey         String
+  timeLabel       String
+  startAt         DateTime
+  endAt           DateTime?
+  durationLabel   String
+  durationMinutes Int?
+  location        String?
+  tone            String    @default("neutral")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, dateKey])
+  @@index([projectId])
+  @@index([startAt])
+}
+
+model JournalEntry {
+  id          String   @id
+  workspaceId String
+  dateKey     String
+  prompt      String
+  content     String
+  mood        String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, dateKey])
+  @@index([dateKey])
+}
+
+model Note {
+  id           String   @id
+  workspaceId  String
+  projectId    String?
+  title        String
+  excerpt      String
+  content      String
+  updatedLabel String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  tasks     Task[]
+  tags      NoteTag[]
+
+  @@index([workspaceId])
+  @@index([projectId])
+}
+
+model Tag {
+  id          String   @id
+  workspaceId String
+  name        String
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  notes     NoteTag[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+model NoteTag {
+  noteId String
+  tagId  String
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([noteId, tagId])
+  @@index([tagId])
+}
+
+model InboxItem {
+  id          String      @id
+  workspaceId String
+  content     String
+  status      InboxStatus @default(OPEN)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, status])
+}
