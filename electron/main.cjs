@@ -1,19 +1,61 @@
 const { app, BrowserWindow, shell } = require("electron");
+const { createServer } = require("node:http");
 const path = require("node:path");
 
-const devServerUrl = process.env.MYPLAN_DEV_SERVER_URL || "http://127.0.0.1:3000";
-const devServerOrigin = new URL(devServerUrl).origin;
-
 let mainWindow;
+let nextServer;
 
-function createMainWindow() {
+async function resolveAppUrl() {
+  const configuredUrl =
+    process.env.NODIARY_DEV_SERVER_URL || process.env.MYPLAN_DEV_SERVER_URL;
+
+  if (configuredUrl) {
+    return configuredUrl;
+  }
+
+  if (!app.isPackaged) {
+    return "http://127.0.0.1:3000";
+  }
+
+  return startPackagedNextServer();
+}
+
+async function startPackagedNextServer() {
+  const next = require("next");
+  const appPath = app.getAppPath();
+  const nextApp = next({
+    dev: false,
+    dir: appPath
+  });
+  const handle = nextApp.getRequestHandler();
+
+  await nextApp.prepare();
+
+  nextServer = createServer((request, response) => {
+    handle(request, response);
+  });
+
+  await new Promise((resolve, reject) => {
+    nextServer.once("error", reject);
+    nextServer.listen(0, "127.0.0.1", resolve);
+  });
+
+  const address = nextServer.address();
+  const port = typeof address === "object" && address ? address.port : 3000;
+
+  return `http://127.0.0.1:${port}`;
+}
+
+function createMainWindow(appUrl) {
+  const appOrigin = new URL(appUrl).origin;
+
   mainWindow = new BrowserWindow({
-    title: "MyPlan",
-    width: 1280,
+    title: "Nodiary",
+    width: 1440,
     height: 860,
     minWidth: 1024,
     minHeight: 720,
-    backgroundColor: "#f7f4ee",
+    backgroundColor: "#fbfaf7",
     show: false,
     webPreferences: {
       contextIsolation: true,
@@ -28,7 +70,7 @@ function createMainWindow() {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (new URL(url).origin === devServerOrigin) {
+    if (new URL(url).origin === appOrigin) {
       return { action: "allow" };
     }
 
@@ -36,20 +78,26 @@ function createMainWindow() {
     return { action: "deny" };
   });
 
-  mainWindow.loadURL(devServerUrl);
+  mainWindow.loadURL(appUrl);
 }
 
-app.whenReady().then(() => {
-  createMainWindow();
+app.whenReady().then(async () => {
+  const appUrl = await resolveAppUrl();
+
+  createMainWindow(appUrl);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
+      createMainWindow(appUrl);
     }
   });
 });
 
 app.on("window-all-closed", () => {
+  if (nextServer) {
+    nextServer.close();
+  }
+
   if (process.platform !== "darwin") {
     app.quit();
   }

@@ -77,6 +77,7 @@ electronProcess = spawn(electronPath, [electronMainPath], {
   cwd: projectRoot,
   env: {
     ...process.env,
+    NODIARY_DEV_SERVER_URL: devServerUrl,
     MYPLAN_DEV_SERVER_URL: devServerUrl
   },
   stdio: "inherit"

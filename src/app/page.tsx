@@ -1,10 +1,5 @@
-import { AppShell } from "@/components/layout/app-shell";
-import { TodayScreen } from "@/features/today/today-screen";
+import { NodiaryWorkspace } from "@/features/nodiary/nodiary-workspace";
 
 export default function HomePage() {
-  return (
-    <AppShell active="today">
-      <TodayScreen />
-    </AppShell>
-  );
+  return <NodiaryWorkspace />;
 }

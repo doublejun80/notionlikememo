@@ -1,7 +1,8 @@
 export const DEFAULT_DEV_SERVER_URL = "http://127.0.0.1:3000";
 
 export function resolveDevServerUrl(env = process.env) {
-  const configuredUrl = env.MYPLAN_DEV_SERVER_URL?.trim();
+  const configuredUrl =
+    env.NODIARY_DEV_SERVER_URL?.trim() || env.MYPLAN_DEV_SERVER_URL?.trim();
 
   return configuredUrl || DEFAULT_DEV_SERVER_URL;
 }

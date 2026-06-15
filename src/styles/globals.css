@@ -13,13 +13,13 @@
 
 html {
   min-height: 100%;
-  background: #f7f5f0;
+  background: #fbfaf7;
 }
 
 body {
   min-height: 100%;
   margin: 0;
-  background: #f7f5f0;
+  background: #fbfaf7;
   color: #24211d;
   font-family: var(--font-noto-sans-kr), system-ui, sans-serif;
 }
@@ -34,3 +34,23 @@ textarea {
   background: #dce9e7;
 }
 
+.nodiary-tiptap .ProseMirror {
+  min-height: 2rem;
+  outline: none;
+}
+
+.nodiary-tiptap .ProseMirror p {
+  margin: 0;
+}
+
+.nodiary-tiptap .is-editor-empty:first-child::before {
+  color: #9a948a;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.nodiary-density-compact {
+  --nodiary-row-scale: 0.92;
+}

@@ -32,6 +32,60 @@ enum InboxStatus {
   ARCHIVED
 }
 
+enum BlockType {
+  PARAGRAPH
+  HEADING
+  TODO
+  BULLET_LIST
+  NUMBERED_LIST
+  QUOTE
+  CODE
+  DIVIDER
+  CALLOUT
+  DATABASE
+  AI_REQUEST
+}
+
+enum DatabaseViewType {
+  TABLE
+  BOARD
+  CALENDAR
+}
+
+enum CalendarProvider {
+  GOOGLE
+  APPLE
+}
+
+enum ExternalSyncState {
+  READ
+  WRITE
+  CONFLICT
+  DELETED
+}
+
+enum AiRunStatus {
+  PLANNED
+  AWAITING_APPROVAL
+  EXECUTING
+  COMPLETED
+  FAILED
+}
+
+enum AiRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum AiApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXECUTED
+  UNDONE
+}
+
 model Workspace {
   id        String   @id
   title     String
@@ -48,6 +102,12 @@ model Workspace {
   notes          Note[]
   tags           Tag[]
   inboxItems     InboxItem[]
+  pages          Page[]
+  databases      Database[]
+  externalCalendars ExternalCalendarAccount[]
+  aiMemories     AiMemory[]
+  aiRuns         AiRun[]
+  preferences    AppPreference[]
 }
 
 model Project {
@@ -111,6 +171,7 @@ model CalendarEvent {
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   project   Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  externalLinks ExternalCalendarEventLink[]
 
   @@index([workspaceId, dateKey])
   @@index([projectId])
@@ -188,4 +249,243 @@ model InboxItem {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, status])
+}
+
+model Page {
+  id          String   @id
+  workspaceId String
+  parentId    String?
+  title       String
+  icon        String?
+  cover       String?
+  sortOrder   Int      @default(0)
+  favorite    Boolean  @default(false)
+  archived    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parent    Page?     @relation("PageTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children  Page[]    @relation("PageTree")
+  blocks    Block[]
+  rows      DatabaseRow[]
+
+  @@index([workspaceId, parentId, sortOrder])
+  @@index([workspaceId, archived])
+}
+
+model Block {
+  id            String    @id
+  pageId        String
+  parentBlockId String?
+  type          BlockType
+  contentJson   Json
+  sortOrder     Int       @default(0)
+  checked       Boolean   @default(false)
+  metadataJson  Json?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  page        Page       @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  parentBlock Block?     @relation("BlockTree", fields: [parentBlockId], references: [id], onDelete: Cascade)
+  children    Block[]    @relation("BlockTree")
+  databases   Database[]
+
+  @@index([pageId, parentBlockId, sortOrder])
+  @@index([type])
+}
+
+model Database {
+  id            String   @id
+  workspaceId   String
+  sourcePageId  String?
+  sourceBlockId String?
+  name          String
+  schemaJson    Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sourceBlock Block?         @relation(fields: [sourceBlockId], references: [id], onDelete: SetNull)
+  fields      DatabaseField[]
+  rows        DatabaseRow[]
+  views       DatabaseView[]
+
+  @@index([workspaceId])
+  @@index([sourceBlockId])
+}
+
+model DatabaseField {
+  id          String   @id
+  databaseId  String
+  name        String
+  type        String
+  optionsJson Json?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  database Database @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+
+  @@index([databaseId, sortOrder])
+}
+
+model DatabaseRow {
+  id             String   @id
+  databaseId     String
+  pageId         String?
+  sortOrder      Int      @default(0)
+  propertiesJson Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  database Database @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+  page     Page?    @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
+  @@index([databaseId, sortOrder])
+  @@index([pageId])
+}
+
+model DatabaseView {
+  id          String           @id
+  databaseId  String
+  name        String
+  type        DatabaseViewType
+  filtersJson Json?
+  sortsJson   Json?
+  layoutJson  Json?
+  sortOrder   Int              @default(0)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  database Database @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+
+  @@index([databaseId, sortOrder])
+  @@index([type])
+}
+
+model ExternalCalendarAccount {
+  id                   String           @id
+  workspaceId          String
+  provider             CalendarProvider
+  accountLabel         String
+  credentialsReference String?
+  syncDirection        String           @default("two-way")
+  conflictPolicy       String           @default("approval-for-high-risk")
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  workspace Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  links     ExternalCalendarEventLink[]
+
+  @@index([workspaceId, provider])
+}
+
+model ExternalCalendarEventLink {
+  id              String            @id
+  accountId       String
+  calendarEventId String
+  providerEventId String
+  syncState       ExternalSyncState @default(READ)
+  etag            String?
+  version         String?
+  conflictJson    Json?
+  undoJson        Json?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  account       ExternalCalendarAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  calendarEvent CalendarEvent           @relation(fields: [calendarEventId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, providerEventId])
+  @@index([calendarEventId])
+  @@index([syncState])
+}
+
+model AiMemory {
+  id          String    @id
+  workspaceId String
+  type        String
+  content     String
+  source      String
+  confidence  Float     @default(0)
+  lastUsedAt  DateTime?
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, archivedAt])
+}
+
+model AiRun {
+  id             String      @id
+  workspaceId    String
+  command        String
+  contextSummary String
+  modelRoute     String
+  status         AiRunStatus @default(PLANNED)
+  tokenEstimate  Int?
+  costEstimate   Float?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  workspace Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actions   AiProposedAction[]
+
+  @@index([workspaceId, status])
+  @@index([createdAt])
+}
+
+model AiProposedAction {
+  id             String           @id
+  runId          String
+  toolName       String
+  argsJson       Json
+  diffJson       Json
+  riskLevel      AiRiskLevel
+  approvalStatus AiApprovalStatus @default(PENDING)
+  undoJson       Json
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  run  AiRun            @relation(fields: [runId], references: [id], onDelete: Cascade)
+  logs AiExecutionLog[]
+
+  @@index([runId, approvalStatus])
+  @@index([riskLevel])
+}
+
+model AiExecutionLog {
+  id         String   @id
+  actionId   String
+  resultJson Json
+  undoJson   Json
+  executedAt DateTime @default(now())
+
+  action AiProposedAction @relation(fields: [actionId], references: [id], onDelete: Cascade)
+
+  @@index([actionId])
+  @@index([executedAt])
+}
+
+model AppPreference {
+  id                 String   @id
+  workspaceId        String
+  theme              String   @default("system")
+  accent             String   @default("teal")
+  density            String   @default("comfortable")
+  editorWidth        String   @default("standard")
+  rightPanelDefault  String   @default("open")
+  startupPageId      String?
+  restoreLastPage    Boolean  @default(true)
+  aiApprovalPolicy   String   @default("balanced")
+  dailyAiBudgetCents Int      @default(300)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
 }

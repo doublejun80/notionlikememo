@@ -3,9 +3,11 @@
 .next/
 node_modules/
 coverage/
+.superpowers/
 out/
 build/
 dist/
+release/
 tsconfig.tsbuildinfo
 devserver.*.log
 electron-dev.*.log

@@ -1,5 +1,38 @@
 # AGENTS.md
 
+## Current Direction Override
+
+As of 2026-06-15, the user explicitly reset the product direction from the
+older MyPlan/TODAY-centered MVP toward **Nodiary**, a Notion-like document
+workspace with AI assistance.
+
+Follow the handoff document first:
+
+- `docs/superpowers/specs/2026-06-15-nodiary-development-handoff.md`
+
+This override supersedes older notes in this file that say AI, full
+Notion-style editing, and Google/Apple calendar integration are out of scope.
+Those features are now part of the requested product direction and should be
+planned/implemented deliberately.
+
+Hard product rules from the user:
+
+- The first screen must be document-first, not a dashboard-first project DB.
+- The left sidebar must keep the full monthly calendar visible and unclipped.
+- Project management belongs inside planning notes as an insertable
+  database/project block, not as the default first-screen focus.
+- AI must be a writable assistant/operator surface with approval and undo, not
+  passive suggestion cards.
+- Do not remove or downgrade UI affordances because alignment is hard.
+- Do not replace icons, handles, or disclosure controls with crude placeholder
+  CSS/text workarounds in the real product.
+- Use a proper icon library already available to the app, such as
+  `lucide-react`, or vetted polished SVG assets. Fix alignment through stable
+  component geometry, fixed icon boxes, line-height, spacing tokens, and visual
+  QA.
+- Before claiming a UI alignment fix is done, compare the rendered screen
+  visually at the target viewport.
+
 ## Project
 
 This project is **MyPlan**, a Notion-style personal planning and record app.

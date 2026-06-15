@@ -6,8 +6,8 @@ import "@/styles/globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "MyPlan",
-  description: "Today-centered personal planning and record workspace"
+  title: "Nodiary",
+  description: "Notion-like personal document workspace with AI operator support"
 };
 
 export default function RootLayout({
@@ -21,4 +21,3 @@ export default function RootLayout({
     </html>
   );
 }
-
