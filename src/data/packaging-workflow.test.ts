@@ -36,23 +36,54 @@ describe("desktop packaging workflow", () => {
       "M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4";
     const faviconPath = join(process.cwd(), "src", "app", "icon.svg");
     const desktopIconPath = join(process.cwd(), "build", "icon.svg");
+    const desktopPngIconPath = join(process.cwd(), "build", "icon.png");
     const layoutPath = join(process.cwd(), "src", "app", "layout.tsx");
 
     expect(existsSync(faviconPath)).toBe(true);
+    expect(existsSync(desktopPngIconPath)).toBe(true);
 
-    if (!existsSync(faviconPath)) {
+    if (!existsSync(faviconPath) || !existsSync(desktopPngIconPath)) {
       return;
     }
 
     const favicon = readFileSync(faviconPath, "utf8");
     const desktopIcon = readFileSync(desktopIconPath, "utf8");
+    const desktopPngIcon = readFileSync(desktopPngIconPath);
     const layout = readFileSync(layoutPath, "utf8");
 
     expect(favicon).toContain(topLayerNotebookPenPath);
     expect(desktopIcon).toContain(topLayerNotebookPenPath);
+    expect(desktopPngIcon.subarray(0, 8)).toEqual(
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+    );
     expect(favicon).toContain('fill="#24211d"');
     expect(favicon).toContain('stroke="#fbfaf7"');
     expect(layout).toContain("icons:");
     expect(layout).toContain('/icon.svg');
+  });
+
+  it("sets the Nodiary runtime icon and app name for Electron dev launches", () => {
+    const electronMainPath = join(process.cwd(), "electron", "main.cjs");
+    const electronMain = readFileSync(electronMainPath, "utf8");
+
+    expect(electronMain).toContain("nativeImage");
+    expect(electronMain).toContain('app.setName("Nodiary")');
+    expect(electronMain).toContain("configureAppIcon()");
+    expect(electronMain).toContain("app.dock.setIcon");
+    expect(electronMain).toContain("icon: resolveRuntimeIconPath()");
+  });
+
+  it("launches the macOS dev server with a named Nodiary app bundle", () => {
+    const devScriptPath = join(process.cwd(), "scripts", "dev-electron.mjs");
+    const devScript = readFileSync(devScriptPath, "utf8");
+
+    expect(devScript).toContain("Nodiary.app");
+    expect(devScript).toContain("CFBundleDisplayName");
+    expect(devScript).toContain("CFBundleExecutable");
+    expect(devScript).toContain("CFBundleName");
+    expect(devScript).toContain("CFBundleIconFile");
+    expect(devScript).toContain("Nodiary Helper");
+    expect(devScript).toContain('build", "icon.icns"');
+    expect(devScript).toContain("electronExecutablePath");
   });
 });

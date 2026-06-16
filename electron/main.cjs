@@ -1,4 +1,4 @@
-const { app, BrowserWindow, nativeTheme, shell } = require("electron");
+const { app, BrowserWindow, nativeImage, nativeTheme, shell } = require("electron");
 const { spawnSync } = require("node:child_process");
 const { createServer } = require("node:http");
 const { randomUUID } = require("node:crypto");
@@ -8,6 +8,8 @@ const path = require("node:path");
 let mainWindow;
 let nextServer;
 const sessionToken = process.env.NODIARY_SESSION_TOKEN || randomUUID();
+
+app.setName("Nodiary");
 
 async function resolveAppUrl() {
   const configuredUrl =
@@ -109,6 +111,35 @@ function resolvePackagedPath(...segments) {
   return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0];
 }
 
+function resolveRuntimeIconPath() {
+  const candidates = [
+    path.join(__dirname, "..", "build", "icon.png"),
+    path.join(__dirname, "..", "build", "icon.icns"),
+    resolvePackagedPath("build", "icon.png"),
+    resolvePackagedPath("build", "icon.icns")
+  ];
+
+  return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
+function configureAppIcon() {
+  const iconPath = resolveRuntimeIconPath();
+
+  if (!iconPath) {
+    return;
+  }
+
+  const icon = nativeImage.createFromPath(iconPath);
+
+  if (icon.isEmpty()) {
+    return;
+  }
+
+  if (process.platform === "darwin" && app.dock) {
+    app.dock.setIcon(icon);
+  }
+}
+
 function createMainWindow(appUrl) {
   const appOrigin = new URL(appUrl).origin;
 
@@ -121,6 +152,7 @@ function createMainWindow(appUrl) {
     minWidth: 1024,
     minHeight: 720,
     backgroundColor: "#f4f2ee",
+    icon: resolveRuntimeIconPath(),
     show: false,
     titleBarStyle: "hiddenInset",
     trafficLightPosition: {
@@ -190,6 +222,7 @@ app.whenReady().then(async () => {
   process.env.NODIARY_SESSION_TOKEN = sessionToken;
   const appUrl = await resolveAppUrl();
 
+  configureAppIcon();
   createMainWindow(appUrl);
 
   app.on("activate", () => {

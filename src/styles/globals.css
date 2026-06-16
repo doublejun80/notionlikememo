@@ -2,6 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+.nodiary-window-drag {
+  -webkit-app-region: drag;
+}
+
+.nodiary-window-no-drag,
+.nodiary-window-no-drag * {
+  -webkit-app-region: no-drag;
+}
+
 :root {
   --font-noto-sans-kr: "Noto Sans KR";
   color-scheme: light;

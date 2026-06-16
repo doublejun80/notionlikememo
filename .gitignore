@@ -5,9 +5,11 @@
 node_modules/
 coverage/
 .superpowers/
+.nodiary-electron/
 out/
 build/*
 !build/icon.svg
+!build/icon.png
 !build/icon.icns
 !build/icon.ico
 dist/

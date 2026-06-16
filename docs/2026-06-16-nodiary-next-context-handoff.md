@@ -137,6 +137,33 @@
   - `/tmp/nodiary-bugfix-qa/electron-approval-tree-titlebar.png`
   - `/tmp/nodiary-bugfix-qa/electron-ai-panel-short-scroll.png`
   - `/tmp/nodiary-bugfix-qa/electron-native-titlebar-vertical-safe-area.png`
+- Latest Dock/drag/theme QA artifacts outside the repo:
+  - `/tmp/nodiary-theme-qa/nodiary-dev-window-front.png`
+  - `/tmp/nodiary-theme-qa/nodiary-app-playwright-navy-clean.png`
+
+## 2026-06-16 Dock/Drag/Theme Hotfix 상태
+
+- `npm run electron:dev`는 macOS에서 `.nodiary-electron/Nodiary.app` 개발 번들을 만든 뒤 실행한다.
+  - 단순 `app.setName()`만으로는 Dock 툴팁/프로세스 이름이 `Electron`에서 바뀌지 않는다.
+  - `scripts/dev-electron.mjs`가 `ditto`로 Electron.app을 복사해 framework symlink를 보존한다.
+  - 메인 executable은 `Nodiary`, helper executable은 `Nodiary Helper*`로 rename한다.
+  - `.nodiary-electron/`은 generated dev bundle이라 git ignore 대상이다.
+- `build/icon.png`는 런타임 Dock icon용으로 추가됐고 git에 포함해야 한다.
+- 실제 실행 확인:
+  - visible process: `Nodiary`
+  - process path: `.nodiary-electron/Nodiary.app/Contents/MacOS/Nodiary`
+  - Helper path: `.nodiary-electron/Nodiary.app/Contents/Frameworks/Nodiary Helper.app/...`
+  - actual native drag moved window from `-1671,113` to `-1581,168`.
+- Theme 옵션:
+  - `system`, `light`, `dark`, `lavender`, `yellow`, `navy`.
+  - dark mode logo contrast is controlled by `--nodiary-logo-bg` / `--nodiary-logo-fg`.
+- Latest verification:
+  - `npm test`: 13 files, 88 tests passed.
+  - `npm run typecheck`: passed.
+  - `npm run lint`: passed.
+  - `npm run build`: passed.
+  - `CSC_IDENTITY_AUTO_DISCOVERY=false npm run electron:pack`: passed.
+  - `npm audit --audit-level=moderate`: 0 vulnerabilities.
 
 ## 아직 남은 이슈
 

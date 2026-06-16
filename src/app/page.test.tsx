@@ -41,7 +41,27 @@ describe("HomePage", () => {
     await waitFor(() =>
       expect(screen.getByTestId("nodiary-sidebar")).toHaveClass("pt-[52px]")
     );
+    expect(screen.getByTestId("nodiary-sidebar-drag-strip")).toHaveClass(
+      "nodiary-window-drag"
+    );
     expect(screen.getByTestId("nodiary-brand-row")).not.toHaveClass("pl-[104px]");
+  });
+
+  it("exposes native Electron drag regions without swallowing toolbar controls", () => {
+    render(<HomePage />);
+
+    const topbar = screen.getByTestId("nodiary-topbar");
+
+    expect(topbar).toHaveClass("nodiary-window-drag");
+    expect(within(topbar).getByRole("button", { name: "댓글" })).toHaveClass(
+      "nodiary-window-no-drag"
+    );
+    expect(within(topbar).getByRole("button", { name: "공유" })).toHaveClass(
+      "nodiary-window-no-drag"
+    );
+    expect(within(topbar).getByRole("button", { name: "설정 열기" })).toHaveClass(
+      "nodiary-window-no-drag"
+    );
   });
 
   it("keeps the complete monthly calendar visible in the left sidebar", () => {
@@ -764,12 +784,40 @@ describe("HomePage", () => {
     expect(workspace.style.getPropertyValue("--nodiary-text-strong")).toBe("#f7f1e8");
     expect(workspace.style.getPropertyValue("--nodiary-hover")).toBe("#34302a");
     expect(workspace.style.getPropertyValue("--nodiary-selected")).toBe("#3a352e");
+    expect(workspace.style.getPropertyValue("--nodiary-logo-bg")).toBe("#f7f1e8");
+    expect(workspace.style.getPropertyValue("--nodiary-logo-fg")).toBe("#24211d");
+    expect(screen.getByTestId("nodiary-brand-mark")).toHaveClass(
+      "bg-[var(--nodiary-logo-bg)]",
+      "text-[var(--nodiary-logo-fg)]"
+    );
 
     await user.click(closeButton);
 
     await waitFor(() => {
       expect(settingsButton).toHaveFocus();
     });
+  });
+
+  it("offers lavender, yellow, and navy workspace theme palettes", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    await user.click(screen.getAllByRole("button", { name: "설정 열기" })[0]);
+
+    expect(screen.getByRole("button", { name: "lavender" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "yellow" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "navy" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "navy" }));
+
+    const workspace = screen.getByTestId("nodiary-workspace");
+
+    expect(workspace).toHaveAttribute("data-theme", "navy");
+    expect(workspace.style.getPropertyValue("--nodiary-app-bg")).toBe("#111827");
+    expect(workspace.style.getPropertyValue("--nodiary-sidebar")).toBe("#172033");
+    expect(workspace.style.getPropertyValue("--nodiary-logo-bg")).toBe("#eaf2ff");
+    expect(workspace.style.getPropertyValue("--nodiary-logo-fg")).toBe("#172033");
   });
 });
 

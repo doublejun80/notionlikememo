@@ -195,3 +195,52 @@
 - 1024/1023 sidebar breakpoint 전환과 좁은 board view 4-column UX는 추가 패스가 필요하다.
 - Google/Apple Calendar는 mocked preview adapter/test만 있으며 실제 provider auth, write, conflict resolver UI는 남아 있다.
 - Calendar data는 여전히 fixture 기반이며, provider-backed event source는 후속 작업이다.
+
+## 2026-06-16 Dock, Drag, Theme Hotfix
+
+추가 수정:
+
+- macOS 개발 실행에서 Dock/프로세스 이름이 `Electron`으로 남는 문제를 수정했다.
+  - `scripts/dev-electron.mjs`가 `.nodiary-electron/Nodiary.app` 개발 번들을 생성한다.
+  - `ditto`로 Electron.app 번들 symlink를 보존한다.
+  - 메인 실행 파일과 Helper 앱/실행 파일을 `Nodiary`/`Nodiary Helper`로 맞춘다.
+  - `build/icon.icns`를 개발 번들 아이콘으로 연결한다.
+- Electron 런타임에서 `build/icon.png`/`build/icon.icns`를 찾아 Dock icon과 BrowserWindow icon에 적용한다.
+- hidden titlebar 위 웹 UI에 drag/no-drag 영역을 추가했다.
+  - topbar와 sidebar titlebar safe area는 drag.
+  - toolbar buttons는 no-drag.
+- 다크모드에서 Nodiary 로고 아이콘이 흰색으로 묻히던 문제를 해결했다.
+  - 로고 전용 `--nodiary-logo-bg`, `--nodiary-logo-fg` 토큰 추가.
+- Theme 옵션을 `system`, `light`, `dark`, `lavender`, `yellow`, `navy`로 확장했다.
+  - 새 theme 값은 UI, 타입, repository preference hydrate validation에 모두 반영했다.
+
+추가 검증:
+
+- `npm test`: 13 files, 88 tests passed.
+- `npm run typecheck`: passed.
+- `npm run lint`: passed.
+- `npm run build`: passed.
+- `CSC_IDENTITY_AUTO_DISCOVERY=false npm run electron:pack`: passed.
+- `npm audit --audit-level=moderate`: 0 vulnerabilities.
+
+추가 화면 QA:
+
+- 개발 실행 프로세스 확인:
+  - visible process: `Nodiary`
+  - main executable: `.nodiary-electron/Nodiary.app/Contents/MacOS/Nodiary`
+  - helper executable: `.nodiary-electron/Nodiary.app/Contents/Frameworks/Nodiary Helper.app/...`
+  - bundle icon: `.nodiary-electron/Nodiary.app/Contents/Resources/nodiary.icns`
+- 실제 macOS drag 검증:
+  - Nodiary window position changed from `-1671,113` to `-1581,168`.
+- Playwright Electron QA with `Nodiary.app` executable:
+  - app name/title: `Nodiary`
+  - first heading: `오늘의 계획`
+  - topbar `-webkit-app-region`: `drag`
+  - settings button `-webkit-app-region`: `no-drag`
+  - theme buttons visible: `lavender`, `yellow`, `navy`
+  - dark logo tokens: `#f7f1e8` / `#24211d`
+  - navy tokens: app bg `#111827`, sidebar `#172033`
+  - console errors/relevant warnings: `0`
+- Latest QA screenshots outside the repo:
+  - `/tmp/nodiary-theme-qa/nodiary-dev-window-front.png`
+  - `/tmp/nodiary-theme-qa/nodiary-app-playwright-navy-clean.png`

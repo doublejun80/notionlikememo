@@ -154,7 +154,7 @@ export type AiState = {
 };
 
 export type AppPreference = {
-  theme: "system" | "light" | "dark";
+  theme: "system" | "light" | "dark" | "lavender" | "yellow" | "navy";
   accent: "teal" | "slate" | "blue";
   density: "comfortable" | "compact";
   documentWidth: "standard" | "wide";

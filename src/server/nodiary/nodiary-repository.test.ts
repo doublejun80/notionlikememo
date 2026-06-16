@@ -141,7 +141,7 @@ describe("nodiary repository", () => {
       },
       appPreference: {
         findFirst: vi.fn(async () => ({
-          theme: "light",
+          theme: "navy",
           accent: "blue",
           density: "compact",
           editorWidth: "wide",
@@ -166,7 +166,7 @@ describe("nodiary repository", () => {
       content: "DB 메모리를 불러온다."
     });
     expect(state.preferences).toMatchObject({
-      theme: "light",
+      theme: "navy",
       accent: "blue",
       density: "compact",
       documentWidth: "wide",

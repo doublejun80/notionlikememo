@@ -312,7 +312,11 @@ function deserializePreferences(
   fallback: AppPreference
 ): AppPreference {
   return {
-    theme: oneOf(record.theme, ["system", "light", "dark"], fallback.theme),
+    theme: oneOf(
+      record.theme,
+      ["system", "light", "dark", "lavender", "yellow", "navy"],
+      fallback.theme
+    ),
     accent: oneOf(record.accent, ["teal", "slate", "blue"], fallback.accent),
     density: oneOf(
       record.density,

@@ -165,6 +165,15 @@ const accentTokens: Record<
   }
 };
 
+const workspaceThemeOptions: NodiaryState["preferences"]["theme"][] = [
+  "system",
+  "light",
+  "dark",
+  "lavender",
+  "yellow",
+  "navy"
+];
+
 export function NodiaryWorkspace() {
   const [state, setState] = useState(() => defaultNodiaryState());
   const [isMobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -756,18 +765,28 @@ function NodiarySidebar({
   return (
     <aside
       className={cn(
-        "w-[320px] shrink-0 flex-col overflow-hidden border-r border-[var(--nodiary-border)] bg-[var(--nodiary-sidebar)] px-3 py-3",
+        "relative w-[320px] shrink-0 flex-col overflow-hidden border-r border-[var(--nodiary-border)] bg-[var(--nodiary-sidebar)] px-3 py-3",
         isDesktopShell && "pt-[52px]",
         className
       )}
       data-testid="nodiary-sidebar"
     >
+      {isDesktopShell ? (
+        <div
+          aria-hidden="true"
+          className="nodiary-window-drag absolute inset-x-0 top-0 h-[52px]"
+          data-testid="nodiary-sidebar-drag-strip"
+        />
+      ) : null}
       <div
-        className="flex h-9 shrink-0 items-center gap-2 px-2"
+        className="nodiary-window-drag flex h-9 shrink-0 items-center gap-2 px-2"
         data-testid="nodiary-brand-row"
       >
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-[var(--nodiary-text)] text-white">
+          <span
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-[var(--nodiary-logo-bg)] text-[var(--nodiary-logo-fg)]"
+            data-testid="nodiary-brand-mark"
+          >
             <NotebookPen className="h-3.5 w-3.5" aria-hidden="true" />
           </span>
           <span className="truncate text-[12px] font-bold tracking-[0.14em] text-[var(--nodiary-muted-strong)]">
@@ -778,7 +797,7 @@ function NodiarySidebar({
           <div className="flex shrink-0 items-center gap-1">
             <button
               aria-label="설정 열기"
-              className="flex h-8 w-8 items-center justify-center rounded hover:bg-[var(--nodiary-hover)]"
+              className="nodiary-window-no-drag flex h-8 w-8 items-center justify-center rounded hover:bg-[var(--nodiary-hover)]"
               onClick={onOpenSettings}
               type="button"
             >
@@ -786,7 +805,7 @@ function NodiarySidebar({
             </button>
             <button
               aria-label="사이드바 닫기"
-              className="flex h-8 w-8 items-center justify-center rounded hover:bg-[var(--nodiary-hover)]"
+              className="nodiary-window-no-drag flex h-8 w-8 items-center justify-center rounded hover:bg-[var(--nodiary-hover)]"
               onClick={onClose}
               type="button"
             >
@@ -1181,11 +1200,14 @@ function NodiaryTopBar({
   onToggleAiPanel: () => void;
 }) {
   return (
-    <header className="flex h-12 shrink-0 items-center justify-between border-b border-[var(--nodiary-border)] bg-[var(--nodiary-panel)] px-2 text-[13px] sm:px-3">
+    <header
+      className="nodiary-window-drag flex h-12 shrink-0 items-center justify-between border-b border-[var(--nodiary-border)] bg-[var(--nodiary-panel)] px-2 text-[13px] sm:px-3"
+      data-testid="nodiary-topbar"
+    >
       <div className="flex min-w-0 items-center gap-2 text-[var(--nodiary-muted-soft)]">
         <button
           aria-label="사이드바 열기"
-          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)] lg:hidden"
+          className="nodiary-window-no-drag flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)] lg:hidden"
           onClick={onOpenMobileSidebar}
           type="button"
         >
@@ -1198,7 +1220,7 @@ function NodiaryTopBar({
       <div className="flex items-center gap-1 text-[var(--nodiary-muted)]">
         <button
           aria-label="댓글"
-          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)] sm:w-auto sm:gap-1.5 sm:px-2"
+          className="nodiary-window-no-drag flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)] sm:w-auto sm:gap-1.5 sm:px-2"
           onClick={() => onAnnounce("댓글 패널은 다음 검수 패스에서 연결할 예정입니다.")}
           type="button"
         >
@@ -1207,7 +1229,7 @@ function NodiaryTopBar({
         </button>
         <button
           aria-label="공유"
-          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)] sm:w-auto sm:gap-1.5 sm:px-2"
+          className="nodiary-window-no-drag flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)] sm:w-auto sm:gap-1.5 sm:px-2"
           onClick={() => onAnnounce("공유 기능은 로컬 문서 보존 검수 이후 연결합니다.")}
           type="button"
         >
@@ -1216,7 +1238,7 @@ function NodiaryTopBar({
         </button>
         <button
           aria-label={isAiPanelOpen ? "AI 패널 닫기" : "AI 패널 열기"}
-          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)]"
+          className="nodiary-window-no-drag flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)]"
           onClick={onToggleAiPanel}
           type="button"
         >
@@ -1228,7 +1250,7 @@ function NodiaryTopBar({
         </button>
         <button
           aria-label="설정 열기"
-          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)]"
+          className="nodiary-window-no-drag flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)]"
           onClick={onOpenSettings}
           type="button"
         >
@@ -1236,7 +1258,7 @@ function NodiaryTopBar({
         </button>
         <button
           aria-label="더보기"
-          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)]"
+          className="nodiary-window-no-drag flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)]"
           onClick={onOpenCommandPalette}
           type="button"
         >
@@ -2653,11 +2675,11 @@ function SettingsDialog({
 
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <SettingGroup label="Theme">
-            {["system", "light", "dark"].map((theme) => (
+            {workspaceThemeOptions.map((theme) => (
               <button
                 className={settingButtonClass(preferences.theme === theme)}
                 key={theme}
-                onClick={() => onUpdate({ theme: theme as typeof preferences.theme })}
+                onClick={() => onUpdate({ theme })}
                 type="button"
               >
                 {theme}
@@ -2935,36 +2957,207 @@ function getWorkspaceThemeStyle(
   theme: NodiaryState["preferences"]["theme"]
 ) {
   const tokens = accentTokens[accent];
-  const isDark = theme === "dark";
+  const palette = getThemePalette(theme, tokens);
 
   return {
-    "--nodiary-accent": tokens.accent,
-    "--nodiary-accent-hover": tokens.accentHover,
-    "--nodiary-accent-soft": tokens.accentSoft,
-    "--nodiary-app-bg": isDark ? "#1f1d1a" : "#fbfaf7",
-    "--nodiary-canvas": isDark ? "#211f1c" : "#ffffff",
-    "--nodiary-panel": isDark ? "#2a2723" : "#ffffff",
-    "--nodiary-panel-muted": isDark ? "#26231f" : "#fbfaf7",
-    "--nodiary-sidebar": isDark ? "#26231f" : "#f4f2ee",
-    "--nodiary-border": isDark ? "#3a352e" : "#e4e0d8",
-    "--nodiary-border-strong": isDark ? "#4a433a" : "#dedad1",
-    "--nodiary-border-subtle": isDark ? "#343029" : "#eeeae3",
-    "--nodiary-text": isDark ? "#f4f1ea" : "#24211d",
-    "--nodiary-text-strong": isDark ? "#f7f1e8" : "#3a3630",
-    "--nodiary-muted": isDark ? "#b8afa2" : "#6f6a61",
-    "--nodiary-muted-strong": isDark ? "#d2c7b8" : "#7c766d",
-    "--nodiary-muted-soft": isDark ? "#a99f91" : "#8c867c",
-    "--nodiary-placeholder": isDark ? "#80776b" : "#9a948a",
-    "--nodiary-icon-muted": isDark ? "#958b7d" : "#aaa399",
-    "--nodiary-icon-faint": isDark ? "#756c60" : "#c0bab0",
-    "--nodiary-hover": isDark ? "#34302a" : "#f7f5f0",
-    "--nodiary-soft": isDark ? "#302c26" : "#f4f2ee",
-    "--nodiary-selected": isDark ? "#3a352e" : "#ebe7df",
-    "--nodiary-warning-bg": isDark ? "#3f3122" : "#fff8ee",
-    "--nodiary-warning-border": isDark ? "#5f452a" : "#f0d6b8",
-    "--nodiary-warning-text": isDark ? "#f1bd80" : "#8a5a23",
-    colorScheme: isDark ? "dark" : "light"
+    "--nodiary-accent": palette.accent,
+    "--nodiary-accent-hover": palette.accentHover,
+    "--nodiary-accent-soft": palette.accentSoft,
+    "--nodiary-app-bg": palette.appBg,
+    "--nodiary-canvas": palette.canvas,
+    "--nodiary-panel": palette.panel,
+    "--nodiary-panel-muted": palette.panelMuted,
+    "--nodiary-sidebar": palette.sidebar,
+    "--nodiary-border": palette.border,
+    "--nodiary-border-strong": palette.borderStrong,
+    "--nodiary-border-subtle": palette.borderSubtle,
+    "--nodiary-text": palette.text,
+    "--nodiary-text-strong": palette.textStrong,
+    "--nodiary-muted": palette.muted,
+    "--nodiary-muted-strong": palette.mutedStrong,
+    "--nodiary-muted-soft": palette.mutedSoft,
+    "--nodiary-placeholder": palette.placeholder,
+    "--nodiary-icon-muted": palette.iconMuted,
+    "--nodiary-icon-faint": palette.iconFaint,
+    "--nodiary-hover": palette.hover,
+    "--nodiary-soft": palette.soft,
+    "--nodiary-selected": palette.selected,
+    "--nodiary-warning-bg": palette.warningBg,
+    "--nodiary-warning-border": palette.warningBorder,
+    "--nodiary-warning-text": palette.warningText,
+    "--nodiary-logo-bg": palette.logoBg,
+    "--nodiary-logo-fg": palette.logoFg,
+    colorScheme: palette.colorScheme
   } as CSSProperties;
+}
+
+function getThemePalette(
+  theme: NodiaryState["preferences"]["theme"],
+  accent: (typeof accentTokens)[NodiaryState["preferences"]["accent"]]
+) {
+  const lightPalette = {
+    accent: accent.accent,
+    accentHover: accent.accentHover,
+    accentSoft: accent.accentSoft,
+    appBg: "#fbfaf7",
+    canvas: "#ffffff",
+    panel: "#ffffff",
+    panelMuted: "#fbfaf7",
+    sidebar: "#f4f2ee",
+    border: "#e4e0d8",
+    borderStrong: "#dedad1",
+    borderSubtle: "#eeeae3",
+    text: "#24211d",
+    textStrong: "#3a3630",
+    muted: "#6f6a61",
+    mutedStrong: "#7c766d",
+    mutedSoft: "#8c867c",
+    placeholder: "#9a948a",
+    iconMuted: "#aaa399",
+    iconFaint: "#c0bab0",
+    hover: "#f7f5f0",
+    soft: "#f4f2ee",
+    selected: "#ebe7df",
+    warningBg: "#fff8ee",
+    warningBorder: "#f0d6b8",
+    warningText: "#8a5a23",
+    logoBg: "#24211d",
+    logoFg: "#fbfaf7",
+    colorScheme: "light"
+  };
+
+  if (theme === "dark") {
+    return {
+      ...lightPalette,
+      appBg: "#1f1d1a",
+      canvas: "#211f1c",
+      panel: "#2a2723",
+      panelMuted: "#26231f",
+      sidebar: "#26231f",
+      border: "#3a352e",
+      borderStrong: "#4a433a",
+      borderSubtle: "#343029",
+      text: "#f4f1ea",
+      textStrong: "#f7f1e8",
+      muted: "#b8afa2",
+      mutedStrong: "#d2c7b8",
+      mutedSoft: "#a99f91",
+      placeholder: "#80776b",
+      iconMuted: "#958b7d",
+      iconFaint: "#756c60",
+      hover: "#34302a",
+      soft: "#302c26",
+      selected: "#3a352e",
+      warningBg: "#3f3122",
+      warningBorder: "#5f452a",
+      warningText: "#f1bd80",
+      logoBg: "#f7f1e8",
+      logoFg: "#24211d",
+      colorScheme: "dark"
+    };
+  }
+
+  if (theme === "lavender") {
+    return {
+      ...lightPalette,
+      accent: "#7253a4",
+      accentHover: "#60458d",
+      accentSoft: "#eee8f8",
+      appBg: "#fbf8ff",
+      canvas: "#fffefe",
+      panel: "#fffefe",
+      panelMuted: "#faf7ff",
+      sidebar: "#f2ecfb",
+      border: "#e5ddef",
+      borderStrong: "#d7cce5",
+      borderSubtle: "#f0eaf7",
+      text: "#2d2638",
+      textStrong: "#382f45",
+      muted: "#6b6078",
+      mutedStrong: "#766a84",
+      mutedSoft: "#8a7d96",
+      placeholder: "#9a8da6",
+      iconMuted: "#9d90a9",
+      iconFaint: "#bdb0c8",
+      hover: "#f6f1fb",
+      soft: "#f2ecfb",
+      selected: "#e9e0f4",
+      warningBg: "#fff6df",
+      warningBorder: "#ead18e",
+      warningText: "#745713",
+      logoBg: "#3b2b52",
+      logoFg: "#fbf8ff"
+    };
+  }
+
+  if (theme === "yellow") {
+    return {
+      ...lightPalette,
+      accent: "#7a5b12",
+      accentHover: "#654a0d",
+      accentSoft: "#fff2bd",
+      appBg: "#fffaf0",
+      canvas: "#fffef9",
+      panel: "#fffef9",
+      panelMuted: "#fff8e8",
+      sidebar: "#f7f0dc",
+      border: "#e8dcc1",
+      borderStrong: "#d9cba9",
+      borderSubtle: "#f1e8d5",
+      text: "#2d2618",
+      textStrong: "#3b321f",
+      muted: "#6e6041",
+      mutedStrong: "#7b6b49",
+      mutedSoft: "#8d7d5a",
+      placeholder: "#9a8c6d",
+      iconMuted: "#a89a7a",
+      iconFaint: "#c4b895",
+      hover: "#fbf3dd",
+      soft: "#f7f0dc",
+      selected: "#efe2bf",
+      warningBg: "#fff3c4",
+      warningBorder: "#e6c356",
+      warningText: "#6d5011",
+      logoBg: "#2d2618",
+      logoFg: "#fff8e1"
+    };
+  }
+
+  if (theme === "navy") {
+    return {
+      ...lightPalette,
+      accent: "#8bb4ff",
+      accentHover: "#a6c6ff",
+      accentSoft: "#223553",
+      appBg: "#111827",
+      canvas: "#131c2b",
+      panel: "#172033",
+      panelMuted: "#131d2c",
+      sidebar: "#172033",
+      border: "#26344d",
+      borderStrong: "#33435f",
+      borderSubtle: "#202d44",
+      text: "#f4f7fb",
+      textStrong: "#f8fbff",
+      muted: "#b8c4d6",
+      mutedStrong: "#d3dced",
+      mutedSoft: "#9eabc0",
+      placeholder: "#7e8aa0",
+      iconMuted: "#8d9bb0",
+      iconFaint: "#647189",
+      hover: "#1d2a41",
+      soft: "#1a2639",
+      selected: "#263853",
+      warningBg: "#3a2c1c",
+      warningBorder: "#6d5129",
+      warningText: "#f2c985",
+      logoBg: "#eaf2ff",
+      logoFg: "#172033",
+      colorScheme: "dark"
+    };
+  }
+
+  return lightPalette;
 }
 
 function loadStoredWorkspaceState(): NodiaryState {

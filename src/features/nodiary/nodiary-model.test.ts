@@ -341,6 +341,7 @@ describe("nodiary model", () => {
   it("updates personalization preferences without losing document state", () => {
     const state = defaultNodiaryState();
     const personalized = updatePreference(state, {
+      theme: "lavender",
       accent: "slate",
       density: "compact",
       documentWidth: "wide",
@@ -349,6 +350,7 @@ describe("nodiary model", () => {
     });
 
     expect(personalized.preferences).toMatchObject({
+      theme: "lavender",
       accent: "slate",
       density: "compact",
       documentWidth: "wide",
