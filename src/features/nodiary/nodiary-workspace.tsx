@@ -181,6 +181,7 @@ export function NodiaryWorkspace() {
   const [workspaceNotice, setWorkspaceNotice] = useState("");
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [activePageId, setActivePageId] = useState(state.activePage.id);
+  const [isDesktopShell, setDesktopShell] = useState(false);
   const [enabledAiScopes, setEnabledAiScopes] = useState<AiContextScope[]>(
     defaultEnabledAiScopes
   );
@@ -195,6 +196,14 @@ export function NodiaryWorkspace() {
     state.preferences.accent,
     state.preferences.theme
   );
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDesktopShell(runsInNodiaryDesktopShell());
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -456,6 +465,7 @@ export function NodiaryWorkspace() {
           setState((current) => movePageNodeByKeyboard(current, nodeId, direction))
         }
         capturedItems={capturedItems}
+        isDesktopShell={isDesktopShell}
         onCreatePage={createPage}
         onFocusQuickCapture={focusQuickCapture}
         onOpenAi={() => setAiPanelOpen(true)}
@@ -621,6 +631,7 @@ export function NodiaryWorkspace() {
               setState((current) => movePageNodeByKeyboard(current, nodeId, direction))
             }
             capturedItems={capturedItems}
+            isDesktopShell={isDesktopShell}
             onClose={() => setMobileSidebarOpen(false)}
             onCreatePage={createPage}
             onFocusQuickCapture={focusQuickCapture}
@@ -693,6 +704,7 @@ type SidebarProps = {
   activePageId: string;
   capturedItems: CapturedItem[];
   className?: string;
+  isDesktopShell: boolean;
   quickCapture: string;
   quickCaptureInputRef: RefObject<HTMLInputElement | null>;
   state: ReturnType<typeof defaultNodiaryState>;
@@ -719,6 +731,7 @@ function NodiarySidebar({
   activePageId,
   capturedItems,
   className,
+  isDesktopShell,
   onCalendarDateSelect,
   onCalendarEventMove,
   onCalendarMonthChange,
@@ -747,7 +760,13 @@ function NodiarySidebar({
         className
       )}
     >
-      <div className="flex h-9 shrink-0 items-center gap-2 px-2">
+      <div
+        className={cn(
+          "flex h-9 shrink-0 items-center gap-2 px-2",
+          isDesktopShell && "pl-[104px]"
+        )}
+        data-testid="nodiary-brand-row"
+      >
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-[var(--nodiary-text)] text-white">
             <NotebookPen className="h-3.5 w-3.5" aria-hidden="true" />
@@ -1601,10 +1620,14 @@ function TodoBlock({
     patch: Parameters<typeof updateTodoBlock>[2]
   ) => void;
 }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const text = block.text ?? "";
+
   return (
-    <label className="flex min-h-9 items-center gap-3 rounded px-1 text-[15px] leading-8 text-[var(--nodiary-text-strong)] hover:bg-[var(--nodiary-hover)]">
+    <div className="flex min-h-9 items-center gap-3 rounded px-1 text-[15px] leading-8 text-[var(--nodiary-text-strong)] hover:bg-[var(--nodiary-hover)]">
       <button
         aria-label={block.checked ? "할 일 완료됨" : "할 일 미완료"}
+        aria-pressed={Boolean(block.checked)}
         className={cn(
           "flex h-9 w-9 shrink-0 items-center justify-center rounded border sm:h-[22px] sm:w-[22px]",
           block.checked
@@ -1619,20 +1642,20 @@ function TodoBlock({
       >
         {block.checked ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : null}
       </button>
-      <span
+      <input
+        aria-label={`할 일 텍스트: ${text}`}
         className={cn(
-          "min-w-0 outline-none",
-          block.checked && "text-[var(--nodiary-muted-soft)] line-through"
+          "h-9 min-w-0 flex-1 rounded bg-transparent px-1 outline-none focus:bg-[var(--nodiary-panel)]",
+          block.checked &&
+            !isEditing &&
+            "text-[var(--nodiary-muted-soft)] line-through"
         )}
-        contentEditable
-        onBlur={(event) =>
-          onUpdate(block.id, { text: event.currentTarget.textContent ?? "" })
-        }
-        suppressContentEditableWarning
-      >
-        {block.text}
-      </span>
-    </label>
+        onBlur={() => setIsEditing(false)}
+        onChange={(event) => onUpdate(block.id, { text: event.target.value })}
+        onFocus={() => setIsEditing(true)}
+        value={text}
+      />
+    </div>
   );
 }
 
@@ -2555,8 +2578,8 @@ function AiOperatorPanel({
                 </span>
               </div>
               <div className="mt-3 rounded bg-[var(--nodiary-panel-muted)] px-2 py-2 font-mono text-[12px] leading-5 text-[var(--nodiary-text-strong)]">
-                {action.diff.split("\n").map((line) => (
-                  <div key={line}>{line}</div>
+                {action.diff.split("\n").map((line, index) => (
+                  <div key={`${action.id}-diff-${index}`}>{line}</div>
                 ))}
               </div>
               <div className="mt-3 flex items-center justify-between">
@@ -3164,6 +3187,18 @@ function getNodiarySessionHeaders(): Record<string, string> {
   const token = desktop?.sessionToken;
 
   return token ? { "x-nodiary-session": token } : {};
+}
+
+function runsInNodiaryDesktopShell() {
+  return Boolean(
+    (globalThis as unknown as {
+      nodiaryDesktop?: unknown;
+      myplanDesktop?: unknown;
+    }).nodiaryDesktop ??
+      (globalThis as unknown as {
+        myplanDesktop?: unknown;
+      }).myplanDesktop
+  );
 }
 
 function escapeHtml(value: string) {

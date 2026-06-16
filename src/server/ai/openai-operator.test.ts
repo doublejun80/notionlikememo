@@ -23,6 +23,9 @@ describe("OpenAI operator boundary", () => {
       name: "nodiary_ai_operator_plan",
       strict: true
     });
+    expect(JSON.stringify(payload.text.format.schema)).not.toContain(
+      '"additionalProperties":true'
+    );
     expect(JSON.stringify(payload)).not.toContain("OPENAI_API_KEY");
   });
 
@@ -48,6 +51,51 @@ describe("OpenAI operator boundary", () => {
       riskLevel: "medium"
     });
     expect(parsed.memories).toContain("사용자는 문서-first UI를 원한다.");
+  });
+
+  it("parses JSON-string action payloads from strict Responses API schemas", () => {
+    const parsed = parseOpenAiOperatorResponse({
+      output_text: JSON.stringify({
+        summary: "일정 변경을 제안합니다.",
+        actions: [
+          {
+            toolName: "updateCalendarEvent",
+            argsJson: JSON.stringify({
+              eventId: "schedule-2",
+              date: "2026-06-18",
+              time: "16:30"
+            }),
+            diffJson: JSON.stringify({
+              before: "2026-06-16 15:00",
+              after: "2026-06-18 16:30"
+            }),
+            riskLevel: "high",
+            undoJson: JSON.stringify({
+              date: "2026-06-16",
+              time: "15:00"
+            })
+          }
+        ],
+        memories: []
+      })
+    });
+
+    expect(parsed.actions[0]).toMatchObject({
+      toolName: "updateCalendarEvent",
+      argsJson: {
+        eventId: "schedule-2",
+        date: "2026-06-18",
+        time: "16:30"
+      },
+      diffJson: {
+        before: "2026-06-16 15:00",
+        after: "2026-06-18 16:30"
+      },
+      undoJson: {
+        date: "2026-06-16",
+        time: "15:00"
+      }
+    });
   });
 
   it("caps and validates structured model output before returning it to the UI", () => {

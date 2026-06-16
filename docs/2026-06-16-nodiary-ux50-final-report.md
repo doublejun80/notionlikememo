@@ -51,6 +51,14 @@
 - SSR hydration mismatch를 막기 위해 client 첫 render에서 localStorage workspace를 읽지 않고, API 실패 fallback은 mount 이후 적용하도록 바꿨다.
 - Google/Apple calendar sync는 실제 provider 연결 전 단계로 mocked `previewCalendarSync` adapter와 integration tests를 추가했다.
 
+## 2026-06-16 OpenAI/Titlebar/Todo 핫픽스
+
+- OpenAI Responses API strict structured output에서 reject되던 `argsJson`/`diffJson`/`undoJson` schema를 JSON string contract로 바꾸고, 서버 파서가 JSON string과 기존 object payload를 모두 안전하게 읽도록 수정했다.
+- 실제 `.env.local` 값은 출력하지 않고, Electron/Next local session token 경유로 `/api/ai/operator`가 OpenAI plan을 200으로 반환하는지 확인했다.
+- Electron macOS titlebar를 앱 메인 배경색 계열 `#F4F2EE`로 맞추고, `hiddenInset` traffic light와 Nodiary 로고가 겹치지 않도록 Electron shell에서만 sidebar brand safe area를 적용했다.
+- Todo block은 체크 토글 버튼과 텍스트 input을 분리했다. 텍스트를 클릭해 편집해도 완료 상태가 바뀌지 않고, 편집 중에는 취소선이 적용되지 않는다.
+- AI approval diff 렌더링에서 반복 JSON line이 React duplicate key 경고를 만들지 않도록 line index 기반 key로 변경했다.
+
 ## UX50 리스트와 처리 상태
 
 | # | 출처 | 발견 내용 | 처리 |

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell } = require("electron");
+const { app, BrowserWindow, nativeTheme, shell } = require("electron");
 const { spawnSync } = require("node:child_process");
 const { createServer } = require("node:http");
 const { randomUUID } = require("node:crypto");
@@ -112,14 +112,21 @@ function resolvePackagedPath(...segments) {
 function createMainWindow(appUrl) {
   const appOrigin = new URL(appUrl).origin;
 
+  nativeTheme.themeSource = "light";
+
   mainWindow = new BrowserWindow({
     title: "Nodiary",
     width: 1440,
     height: 860,
     minWidth: 1024,
     minHeight: 720,
-    backgroundColor: "#fbfaf7",
+    backgroundColor: "#f4f2ee",
     show: false,
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: {
+      x: 16,
+      y: 18
+    },
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

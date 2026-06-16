@@ -12,6 +12,14 @@
 - product direction: Nodiary, Notion Core Clone-lite, Electron 유지.
 - first screen rule: 프로젝트 대시보드가 아니라 `오늘의 계획` 문서 편집 화면.
 
+## 최신 핫픽스
+
+- OpenAI operator 연결 실패의 실제 원인은 Responses API strict schema가 object형 `argsJson`/`diffJson`/`undoJson`을 거부한 것이었다. 해당 필드를 JSON string contract로 바꾸고, 서버 파서에서 JSON string을 다시 record로 복원하게 수정했다.
+- Electron/Next dev server를 `.env.local`과 동일 session token으로 재시작해 `/api/ai/operator`가 실제 OpenAI plan을 200으로 반환하는지 확인했다. 키 값은 출력하지 않았다.
+- macOS Electron titlebar는 light theme + `#F4F2EE` 배경 + `hiddenInset`으로 앱 메인 색과 맞췄다. Electron shell에서만 sidebar brand row에 traffic-light safe area를 적용해 로고 겹침과 hydration mismatch를 동시에 피했다.
+- Todo block은 checkbox button과 text input을 분리했고, 텍스트 편집 중에는 완료 상태의 취소선이 보이지 않게 했다.
+- AI approval diff의 반복 JSON line 렌더링에서 duplicate React key warning을 제거했다.
+
 ## 이번 추가 패스에서 고친 것
 
 - Workspace API validation을 `pageTree`, 전체 `pages`, nested database field/filter/sort/row schema까지 확장.
@@ -69,7 +77,7 @@
 
 ## 검증 완료
 
-- `npm test`: 13 files, 74 tests passed.
+- `npm test`: 13 files, 79 tests passed.
 - `npm run typecheck`: passed.
 - `npm run lint`: passed.
 - `npm run build`: passed.
@@ -88,6 +96,10 @@
   - project DB is not on first screen.
   - no React hydration mismatch console error.
   - sidebar calendar cells: 35.
+  - OpenAI calendar move command returns an approval proposal without local fallback.
+  - Todo text edit does not toggle completion and does not show line-through while focused.
+  - Electron titlebar background is `#F4F2EE`, and the traffic lights no longer overlap the Nodiary logo.
+  - Electron console errors/warnings: 0.
 
 ## QA 증거 파일
 
@@ -107,6 +119,9 @@
   - `/tmp/nodiary-qa-2026-06-16/electron-home.png`
   - `/tmp/nodiary-qa-2026-06-16/qa-results.json`
   - `/tmp/nodiary-qa-2026-06-16/electron-results.json`
+- Latest hotfix QA artifacts outside the repo:
+  - `/tmp/nodiary-fix-qa/electron-final-verified.png`
+  - `/tmp/nodiary-fix-qa/electron-native-titlebar-strip-front.png`
 
 ## 아직 남은 이슈
 

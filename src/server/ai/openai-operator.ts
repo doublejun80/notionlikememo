@@ -71,20 +71,17 @@ const operatorSchema = {
             ]
           },
           argsJson: {
-            type: "object",
-            additionalProperties: true
+            type: "string"
           },
           diffJson: {
-            type: "object",
-            additionalProperties: true
+            type: "string"
           },
           riskLevel: {
             type: "string",
             enum: ["low", "medium", "high"]
           },
           undoJson: {
-            type: "object",
-            additionalProperties: true
+            type: "string"
           }
         }
       }
@@ -108,6 +105,7 @@ export function buildOpenAiOperatorPayload(
       "You are Nodiary's AI Operator.",
       "Return proposed actions only. Do not claim that changes were executed.",
       "Every mutating action must include a human-readable diff, risk level, and undo payload.",
+      "For each action, encode argsJson, diffJson, and undoJson as JSON strings.",
       "High-risk calendar writes, deletion, bulk edits, and database restructuring require approval.",
       `Current page: ${context.pageTitle}`,
       `Selected text: ${context.selectedText || "(none)"}`,
@@ -223,19 +221,27 @@ function readOperatorAction(value: unknown): OperatorPlan["actions"][number] | u
     !allowedToolNames.has(record.toolName) ||
     typeof record.riskLevel !== "string" ||
     !allowedRiskLevels.has(record.riskLevel) ||
-    !isPlainRecord(record.argsJson) ||
-    !isPlainRecord(record.diffJson) ||
-    !isPlainRecord(record.undoJson)
+    !readJsonRecord(record.argsJson) ||
+    !readJsonRecord(record.diffJson) ||
+    !readJsonRecord(record.undoJson)
   ) {
+    return undefined;
+  }
+
+  const argsJson = readJsonRecord(record.argsJson);
+  const diffJson = readJsonRecord(record.diffJson);
+  const undoJson = readJsonRecord(record.undoJson);
+
+  if (!argsJson || !diffJson || !undoJson) {
     return undefined;
   }
 
   return {
     toolName: record.toolName,
-    argsJson: limitRecord(record.argsJson),
-    diffJson: limitRecord(record.diffJson),
+    argsJson: limitRecord(argsJson),
+    diffJson: limitRecord(diffJson),
     riskLevel: record.riskLevel as OperatorPlan["actions"][number]["riskLevel"],
-    undoJson: limitRecord(record.undoJson)
+    undoJson: limitRecord(undoJson)
   };
 }
 
@@ -249,6 +255,24 @@ function emptyOperatorPlan(summary: string): OperatorPlan {
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readJsonRecord(value: unknown): Record<string, unknown> | undefined {
+  if (isPlainRecord(value)) {
+    return value;
+  }
+
+  if (typeof value !== "string" || value.length > 8_000) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+
+    return isPlainRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function limitRecord(record: Record<string, unknown>) {

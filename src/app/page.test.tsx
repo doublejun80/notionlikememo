@@ -33,6 +33,16 @@ describe("HomePage", () => {
     expect(screen.queryByText("진행 중인 프로젝트")).not.toBeInTheDocument();
   });
 
+  it("reserves sidebar brand space for Electron traffic lights", async () => {
+    vi.stubGlobal("nodiaryDesktop", { sessionToken: "session-secret" });
+
+    render(<HomePage />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("nodiary-brand-row")).toHaveClass("pl-[104px]")
+    );
+  });
+
   it("keeps the complete monthly calendar visible in the left sidebar", () => {
     render(<HomePage />);
 
@@ -367,6 +377,70 @@ describe("HomePage", () => {
     expect(getDocumentBlock("메모 본문")).toHaveTextContent("Notion-like의 첫인상");
   });
 
+  it("renders repeated AI diff lines without duplicate React key warnings", async () => {
+    const user = userEvent.setup();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          plan: {
+            summary: "디자인 리뷰 일정을 승인 큐로 이동합니다.",
+            actions: [
+              {
+                toolName: "updateCalendarEvent",
+                argsJson: {
+                  eventTitle: "디자인 리뷰",
+                  date: "2026-06-18",
+                  time: "16:30"
+                },
+                diffJson: {
+                  target: "캘린더 이벤트: 디자인 리뷰",
+                  changes: [
+                    {
+                      field: "시작 시간",
+                      from: "기존 시작 시간",
+                      to: "2026-06-18 16:30"
+                    },
+                    {
+                      field: "종료 시간",
+                      from: "기존 종료 시간",
+                      to: "기존 소요시간 유지"
+                    }
+                  ]
+                },
+                riskLevel: "high",
+                undoJson: {
+                  eventTitle: "디자인 리뷰"
+                }
+              }
+            ],
+            memories: []
+          }
+        })
+      }))
+    );
+
+    render(<HomePage />);
+
+    await user.type(
+      await screen.findByLabelText("AI 명령 입력"),
+      "디자인 리뷰를 6월 18일 오후 4시 30분으로 옮겨줘"
+    );
+    await user.click(screen.getByRole("button", { name: "AI에게 보내기" }));
+
+    expect(await screen.findByText(/2026-06-18 16:30/)).toBeInTheDocument();
+    expect(
+      consoleError.mock.calls.some(([message]) =>
+        String(message).includes("Encountered two children with the same key")
+      )
+    ).toBe(false);
+
+    consoleError.mockRestore();
+  });
+
   it("falls back to a local approval queue when the AI operator route fails", async () => {
     const user = userEvent.setup();
 
@@ -420,6 +494,32 @@ describe("HomePage", () => {
 
     expect(screen.getByText("16:30")).toBeInTheDocument();
     expect(screen.getByText("높은 위험")).toBeInTheDocument();
+  });
+
+  it("lets todo text edit independently from completion state", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    const todoText = screen.getByLabelText(
+      "할 일 텍스트: OpenAI 키는 .env.local에 저장했고 화면에 노출하지 않는다."
+    );
+    const todoToggle = screen.getByRole("button", { name: "할 일 완료됨" });
+
+    await user.click(todoText);
+
+    expect(todoToggle).toHaveAttribute("aria-pressed", "true");
+    expect(todoText).not.toHaveClass("line-through");
+
+    await user.clear(todoText);
+    await user.type(todoText, "OpenAI 연결은 실제 API 성공 후 승인 큐로 보여준다.");
+
+    expect(todoToggle).toHaveAttribute("aria-pressed", "true");
+    expect(todoText).toHaveValue("OpenAI 연결은 실제 API 성공 후 승인 큐로 보여준다.");
+
+    await user.click(todoToggle);
+
+    expect(todoToggle).toHaveAttribute("aria-pressed", "false");
   });
 
   it("saves quick capture items visibly in the sidebar inbox trail", async () => {
