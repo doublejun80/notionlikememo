@@ -53,10 +53,21 @@ describe("desktop packaging workflow", () => {
 
     expect(favicon).toContain(topLayerNotebookPenPath);
     expect(desktopIcon).toContain(topLayerNotebookPenPath);
+    expect(desktopIcon).toContain('viewBox="0 0 1024 1024"');
+    expect(desktopIcon).toContain('x="100"');
+    expect(desktopIcon).toContain('y="100"');
+    expect(desktopIcon).toContain('width="824"');
+    expect(desktopIcon).toContain('height="824"');
+    expect(desktopIcon).toContain('macosIconShadow');
+    expect(desktopIcon).toContain('feGaussianBlur');
+    expect(desktopIcon).toContain(
+      '<rect x="100" y="100" width="824" height="824" rx="180" fill="url(#nodiaryIconSurface)"/>'
+    );
     expect(desktopPngIcon.subarray(0, 8)).toEqual(
       Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
     );
-    expect(favicon).toContain('fill="#24211d"');
+    expect(favicon).toContain('stop-color="#302c26"');
+    expect(favicon).toContain('stop-color="#1f1d1a"');
     expect(favicon).toContain('stroke="#fbfaf7"');
     expect(layout).toContain("icons:");
     expect(layout).toContain('/icon.svg');

@@ -244,3 +244,31 @@
 - Latest QA screenshots outside the repo:
   - `/tmp/nodiary-theme-qa/nodiary-dev-window-front.png`
   - `/tmp/nodiary-theme-qa/nodiary-app-playwright-navy-clean.png`
+
+## 2026-06-16 macOS Icon Optical-Size Hotfix
+
+추가 수정:
+
+- Apple HIG의 macOS app icon 방향과 Apple Design Resources icon template 흐름에 맞춰 1024 canvas 안 artwork를 824px 중심 영역으로 줄였다.
+- 기존 `1024x1024` 전체를 채우던 dark rounded rect를 `x=100`, `y=100`, `width=824`, `height=824`로 조정했다.
+- main surface에 직접 gradient를 적용하고, shadow는 별도 rect + Gaussian blur로 분리했다.
+  - 이전 SVG filter는 main rect를 투명하게 만드는 렌더링 문제가 있어 폐기했다.
+- `build/icon.svg`, `src/app/icon.svg`, `build/icon.png`, `build/icon.icns`, `build/icon.ico`를 같은 SVG 원본에서 재생성했다.
+
+추가 검증:
+
+- `npm test`: 13 files, 88 tests passed.
+- `npm run typecheck`: passed.
+- `npm run lint`: passed.
+- `npm run build`: passed.
+- `CSC_IDENTITY_AUTO_DISCOVERY=false npm run electron:pack`: passed.
+- `npm audit --audit-level=moderate`: 0 vulnerabilities.
+- Electron QA:
+  - app name/title: `Nodiary`
+  - first heading: `오늘의 계획`
+  - console errors: `0`
+  - dev bundle icon and `build/icon.icns`: byte-for-byte match.
+- Latest icon QA screenshots outside the repo:
+  - `/tmp/nodiary-icon-hig-preview.png`
+  - `/tmp/nodiary-icon-dock-wide.png`
+  - `/tmp/nodiary-icon-electron-qa.png`

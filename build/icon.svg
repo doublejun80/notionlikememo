@@ -1,6 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Nodiary">
-  <rect width="1024" height="1024" rx="220" fill="#24211d"/>
-  <g transform="translate(200 170) scale(30)" fill="none" stroke="#fbfaf7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <defs>
+    <linearGradient id="nodiaryIconSurface" x1="512" x2="512" y1="100" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#302c26"/>
+      <stop offset="1" stop-color="#1f1d1a"/>
+    </linearGradient>
+    <linearGradient id="nodiaryIconHighlight" x1="512" x2="512" y1="104" y2="448" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".14"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="macosIconShadow" x="44" y="52" width="936" height="936" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="28"/>
+    </filter>
+  </defs>
+  <rect x="100" y="128" width="824" height="824" rx="180" fill="#000000" opacity=".28" filter="url(#macosIconShadow)"/>
+  <rect x="100" y="100" width="824" height="824" rx="180" fill="url(#nodiaryIconSurface)"/>
+  <rect x="104" y="104" width="816" height="410" rx="176" fill="url(#nodiaryIconHighlight)" opacity=".55"/>
+  <g transform="translate(212 172) scale(29)" fill="none" stroke="#fbfaf7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
     <path d="M2 6h4"/>
     <path d="M2 10h4"/>

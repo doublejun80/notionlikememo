@@ -165,6 +165,31 @@
   - `CSC_IDENTITY_AUTO_DISCOVERY=false npm run electron:pack`: passed.
   - `npm audit --audit-level=moderate`: 0 vulnerabilities.
 
+## 2026-06-16 macOS Icon Optical-Size Hotfix 상태
+
+- Dock에서 Nodiary 아이콘이 다른 macOS 앱 아이콘보다 크게 보이던 문제를 수정했다.
+- `build/icon.svg`와 `src/app/icon.svg`는 이제 1024 canvas 안에 824px 중심 artwork를 둔다.
+  - main surface: `x=100`, `y=100`, `width=824`, `height=824`, `rx=180`.
+  - shadow는 main rect filter가 아니라 별도 rect + `feGaussianBlur`로 렌더한다.
+  - main surface는 직접 gradient fill을 사용한다.
+- 같은 원본에서 재생성한 파일:
+  - `build/icon.png`
+  - `build/icon.icns`
+  - `build/icon.ico`
+- 실제 dev bundle 확인:
+  - `.nodiary-electron/Nodiary.app/Contents/Resources/nodiary.icns`와 `build/icon.icns`가 byte-for-byte match.
+- Latest icon QA screenshots outside the repo:
+  - `/tmp/nodiary-icon-hig-preview.png`
+  - `/tmp/nodiary-icon-dock-wide.png`
+  - `/tmp/nodiary-icon-electron-qa.png`
+- Latest verification:
+  - `npm test`: 13 files, 88 tests passed.
+  - `npm run typecheck`: passed.
+  - `npm run lint`: passed.
+  - `npm run build`: passed.
+  - `CSC_IDENTITY_AUTO_DISCOVERY=false npm run electron:pack`: passed.
+  - `npm audit --audit-level=moderate`: 0 vulnerabilities.
+
 ## 아직 남은 이슈
 
 - Slash menu 검색/필터 미구현.
