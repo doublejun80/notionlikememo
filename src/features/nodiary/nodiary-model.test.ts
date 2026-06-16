@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  addDatabaseRow,
   approveAiAction,
   createAiRunFromOperatorPlan,
   createAiRun,
@@ -75,6 +76,28 @@ describe("nodiary model", () => {
     );
 
     expect(databaseBlock?.database?.activeView).toBe("calendar");
+  });
+
+  it("adds editable database rows with stable unique ids", () => {
+    const state = insertBlockFromSlash(defaultNodiaryState(), "memo", "database");
+    const nextState = addDatabaseRow(state, "project-db", {
+      title: "새 보안 검토 항목",
+      status: "review",
+      owner: "검토자",
+      date: "2026-06-21"
+    });
+
+    const rows = nextState.activePage.blocks.find((block) => block.id === "project-db")
+      ?.database?.rows;
+    const added = rows?.find((row) => row.title === "새 보안 검토 항목");
+
+    expect(rows).toHaveLength(5);
+    expect(added).toMatchObject({
+      id: "row-5",
+      status: "review",
+      owner: "검토자",
+      date: "2026-06-21"
+    });
   });
 
   it("selects sidebar calendar dates and exposes the selected schedule", () => {

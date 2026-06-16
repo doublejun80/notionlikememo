@@ -13,6 +13,7 @@ vi.mock("@/server/nodiary/nodiary-repository", () => ({
 describe("/api/nodiary/workspace", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.stubEnv("DATABASE_URL", "file:test.db");
   });
 
   afterEach(() => {
@@ -26,6 +27,22 @@ describe("/api/nodiary/workspace", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toHaveProperty("state.activePage.title", "오늘의 계획");
+  });
+
+  it("falls back to the default workspace when local persistence is unavailable", async () => {
+    vi.mocked(loadNodiaryState).mockRejectedValue(new Error("missing database url"));
+
+    const response = await GET(new Request("http://localhost/api/nodiary/workspace"));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      persistence: "fallback",
+      state: {
+        activePage: {
+          title: "오늘의 계획"
+        }
+      }
+    });
   });
 
   it("requires the Electron session token when local API protection is enabled", async () => {
@@ -79,5 +96,22 @@ describe("/api/nodiary/workspace", () => {
 
     expect(response.status).toBe(200);
     expect(saveNodiaryState).toHaveBeenCalledWith(state);
+  });
+
+  it("keeps the editor usable when local persistence cannot save", async () => {
+    vi.mocked(saveNodiaryState).mockRejectedValue(new Error("missing database url"));
+    const state = defaultNodiaryState();
+    const response = await PUT(
+      new Request("http://localhost/api/nodiary/workspace", {
+        method: "PUT",
+        body: JSON.stringify({ state })
+      })
+    );
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({
+      ok: false,
+      persistence: "fallback"
+    });
   });
 });

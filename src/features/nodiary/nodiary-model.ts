@@ -659,7 +659,38 @@ export function moveDatabaseRow(
             rows
           }
         };
-      })
+    })
+  });
+}
+
+export function addDatabaseRow(
+  state: NodiaryState,
+  databaseBlockId: string,
+  row: Partial<DatabaseRow> = {}
+): NodiaryState {
+  return withActivePage(state, {
+    ...state.activePage,
+    blocks: state.activePage.blocks.map((block) => {
+      if (block.id !== databaseBlockId || !block.database) {
+        return block;
+      }
+
+      const nextRow: DatabaseRow = {
+        id: createDatabaseRowId(block.database.rows),
+        title: row.title?.trim() || "새 작업",
+        status: row.status ?? "backlog",
+        owner: row.owner?.trim() || "나",
+        date: row.date ?? "2026-06-16"
+      };
+
+      return {
+        ...block,
+        database: {
+          ...block.database,
+          rows: [...block.database.rows, nextRow]
+        }
+      };
+    })
   });
 }
 
@@ -1238,6 +1269,19 @@ function createUniqueId(existingIds: Set<string>, prefix: string) {
   return candidate;
 }
 
+function createDatabaseRowId(rows: DatabaseRow[]) {
+  const existingIds = new Set(rows.map((row) => row.id));
+  let index = rows.length + 1;
+  let candidate = `row-${index}`;
+
+  while (existingIds.has(candidate)) {
+    index += 1;
+    candidate = `row-${index}`;
+  }
+
+  return candidate;
+}
+
 function insertDatabaseRowAtStatusIndex(
   rows: DatabaseRow[],
   row: DatabaseRow,
@@ -1561,6 +1605,17 @@ function applyOperatorOperation(
     const afterBlockId = readStringArg(args, "afterBlockId") ?? "memo";
 
     return insertBlockFromSlash(state, afterBlockId, "database");
+  }
+
+  if (operation.toolName === "createDatabaseRow") {
+    const databaseBlockId = readStringArg(args, "databaseBlockId") ?? "project-db";
+
+    return addDatabaseRow(state, databaseBlockId, {
+      title: readStringArg(args, "title"),
+      status: readDatabaseStatusArg(args, "status"),
+      owner: readStringArg(args, "owner"),
+      date: readStringArg(args, "date")
+    });
   }
 
   if (operation.toolName === "updateBlock") {

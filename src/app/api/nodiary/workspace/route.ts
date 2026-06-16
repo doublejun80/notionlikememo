@@ -4,7 +4,10 @@ import {
   loadNodiaryState,
   saveNodiaryState
 } from "@/server/nodiary/nodiary-repository";
-import type { NodiaryState } from "@/features/nodiary/nodiary-model";
+import {
+  defaultNodiaryState,
+  type NodiaryState
+} from "@/features/nodiary/nodiary-model";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +29,23 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const state = await loadNodiaryState();
+  if (!hasDatabaseUrl()) {
+    return NextResponse.json({
+      persistence: "fallback",
+      state: getDefaultWorkspaceState()
+    });
+  }
+
+  let state: NodiaryState;
+
+  try {
+    state = await loadNodiaryState();
+  } catch {
+    return NextResponse.json({
+      persistence: "fallback",
+      state: getDefaultWorkspaceState()
+    });
+  }
 
   return NextResponse.json({ state });
 }
@@ -54,9 +73,39 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "invalid_state" }, { status: 422 });
   }
 
-  await saveNodiaryState(state);
+  if (!hasDatabaseUrl()) {
+    return NextResponse.json(
+      {
+        ok: false,
+        persistence: "fallback"
+      },
+      { status: 202 }
+    );
+  }
+
+  try {
+    await saveNodiaryState(state);
+  } catch {
+    return NextResponse.json(
+      {
+        ok: false,
+        persistence: "fallback"
+      },
+      { status: 202 }
+    );
+  }
 
   return NextResponse.json({ ok: true });
+}
+
+function getDefaultWorkspaceState(): NodiaryState {
+  return {
+    ...defaultNodiaryState()
+  };
+}
+
+function hasDatabaseUrl() {
+  return Boolean(process.env.DATABASE_URL);
 }
 
 function readStatePayload(payload: unknown): NodiaryState | undefined {

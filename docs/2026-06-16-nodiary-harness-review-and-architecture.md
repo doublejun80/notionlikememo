@@ -10,6 +10,15 @@
 
 - `docs/2026-06-16-nodiary-ux50-final-report.md`
 
+2026-06-16 후속 수정에서 추가로 반영된 사항:
+
+- 첫 화면 workspace hydrate/save를 `/api/nodiary/workspace` GET/PUT에 연결했다.
+- `DATABASE_URL`이 없는 dev 환경에서는 workspace API가 default fallback으로 응답해 500을 피한다.
+- DB block row add/inline edit와 real calendar grid view를 추가했다.
+- AI context chips를 실제 토글로 바꾸고 request payload scope에 반영했다.
+- theme/accent의 주요 UI token 적용 범위를 넓혔다.
+- Playwright Chromium과 Playwright Electron으로 후속 시각 QA를 수행했다.
+
 ## 요약
 
 Nodiary는 기존 MyPlan 중심 MVP에서 문서 우선 Notion Core Clone-lite 방향으로 재구성되었다. 첫 화면은 프로젝트 대시보드가 아니라 `오늘의 계획` 문서 편집 화면이며, 좌측에는 전체 월간 달력과 page tree, 중앙에는 Notion-like document canvas, 우측에는 쓰기 가능한 AI Operator panel이 배치된다.

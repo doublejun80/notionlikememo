@@ -38,6 +38,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
   type RefObject
@@ -46,6 +47,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import {
+  addDatabaseRow,
   approveAiAction,
   createNewPage,
   createAiRun,
@@ -107,6 +109,42 @@ type CapturedItem = {
 const workspaceStorageKey = "nodiary.workspace.v2";
 const captureStorageKey = "nodiary.quickCapture.v1";
 
+const aiContextScopes = [
+  { id: "currentPage", label: "현재 페이지" },
+  { id: "selectedBlock", label: "선택 블록" },
+  { id: "sidebarCalendar", label: "왼쪽 캘린더" },
+  { id: "longTermMemory", label: "장기 메모리" }
+] as const;
+
+type AiContextScope = (typeof aiContextScopes)[number]["id"];
+
+const defaultEnabledAiScopes = aiContextScopes.map((scope) => scope.id);
+
+const accentTokens: Record<
+  NodiaryState["preferences"]["accent"],
+  {
+    accent: string;
+    accentHover: string;
+    accentSoft: string;
+  }
+> = {
+  teal: {
+    accent: "#2f5d62",
+    accentHover: "#284f53",
+    accentSoft: "#e4efed"
+  },
+  slate: {
+    accent: "#4d5662",
+    accentHover: "#3f4752",
+    accentSoft: "#eceff2"
+  },
+  blue: {
+    accent: "#315f9c",
+    accentHover: "#284f82",
+    accentSoft: "#e7eef8"
+  }
+};
+
 export function NodiaryWorkspace() {
   const [state, setState] = useState(() => loadStoredWorkspaceState());
   const [isMobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -125,12 +163,18 @@ export function NodiaryWorkspace() {
   const [workspaceNotice, setWorkspaceNotice] = useState("");
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [activePageId, setActivePageId] = useState(state.activePage.id);
+  const [enabledAiScopes, setEnabledAiScopes] = useState<AiContextScope[]>(
+    defaultEnabledAiScopes
+  );
   const quickCaptureInputRef = useRef<HTMLInputElement>(null);
+  const hasHydratedWorkspaceRef = useRef(false);
 
   const documentWidthClass =
     state.preferences.documentWidth === "wide" ? "max-w-[900px]" : "max-w-[800px]";
   const densityClass =
     state.preferences.density === "compact" ? "nodiary-density-compact" : "";
+  const themeStyle = getWorkspaceThemeStyle(state.preferences.accent);
+  const isDarkTheme = state.preferences.theme === "dark";
 
   useEffect(() => {
     if (shouldCloseInitialAiPanelOnSmallScreen(state.preferences.rightAiPanel)) {
@@ -143,7 +187,62 @@ export function NodiaryWorkspace() {
   }, [state.preferences.rightAiPanel]);
 
   useEffect(() => {
+    let isCancelled = false;
+
+    async function hydrateWorkspace() {
+      try {
+        const headers = getNodiarySessionHeaders();
+        const response = await fetch(
+          "/api/nodiary/workspace",
+          Object.keys(headers).length > 0
+            ? {
+                headers
+              }
+            : undefined
+        );
+
+        if (!response.ok) {
+          throw new Error("Workspace API failed");
+        }
+
+        const payload = (await response.json()) as { state?: unknown };
+        const hydratedState = readHydratedWorkspaceState(payload.state);
+
+        if (!hydratedState || isCancelled) {
+          return;
+        }
+
+        setState(hydratedState);
+        setActivePageId(hydratedState.activePage.id);
+        setAiPanelOpen(hydratedState.preferences.rightAiPanel === "open");
+      } catch {
+        // The localStorage fallback keeps the editor usable offline or before API boot.
+      } finally {
+        if (!isCancelled) {
+          hasHydratedWorkspaceRef.current = true;
+        }
+      }
+    }
+
+    void hydrateWorkspace();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     storeWorkspaceState(state);
+
+    if (!hasHydratedWorkspaceRef.current) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void saveWorkspaceStateToApi(state);
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
   }, [state]);
 
   useEffect(() => {
@@ -253,9 +352,21 @@ export function NodiaryWorkspace() {
         },
         body: JSON.stringify({
           command,
-          pageTitle: state.activePage.title,
-          selectedText: "",
-          memory: state.ai.memories.map((memory) => memory.content)
+          pageTitle: enabledAiScopes.includes("currentPage")
+            ? state.activePage.title
+            : "Nodiary",
+          selectedText: enabledAiScopes.includes("selectedBlock")
+            ? getSelectedBlockContext(state)
+            : "",
+          memory: enabledAiScopes.includes("longTermMemory")
+            ? state.ai.memories.map((memory) => memory.content)
+            : [],
+          calendarContext: enabledAiScopes.includes("sidebarCalendar")
+            ? {
+                selectedDate: state.sidebarCalendar.selectedDate,
+                schedule: state.sidebarCalendar.schedule
+              }
+            : undefined
         })
       });
 
@@ -281,10 +392,13 @@ export function NodiaryWorkspace() {
   return (
     <div
       className={cn(
-        "flex h-dvh overflow-hidden bg-[#fbfaf7] text-[#24211d]",
+        "flex h-dvh overflow-hidden",
+        isDarkTheme ? "bg-[#1f1d1a] text-[#f4f1ea]" : "bg-[#fbfaf7] text-[#24211d]",
         densityClass
       )}
       data-accent={state.preferences.accent}
+      data-theme={state.preferences.theme}
+      style={themeStyle}
     >
       <NodiarySidebar
         activePageId={activePageId}
@@ -332,11 +446,19 @@ export function NodiaryWorkspace() {
           onToggleAiPanel={() => setAiPanelOpen((open) => !open)}
           pageTitle={state.activePage.title}
         />
-        <main className="min-h-0 min-w-0 flex-1 overflow-auto bg-white">
+        <main
+          className={cn(
+            "min-h-0 min-w-0 flex-1 overflow-auto",
+            isDarkTheme ? "bg-[#211f1c]" : "bg-white"
+          )}
+        >
           <DocumentCanvas
             blocks={state.activePage.blocks}
             documentWidthClass={documentWidthClass}
             isSlashOpen={isSlashOpen}
+            onAddDatabaseRow={(databaseBlockId) =>
+              setState((current) => addDatabaseRow(current, databaseBlockId))
+            }
             onCloseSlash={closeSlash}
             onInsertParagraph={(text) =>
               setState((current) =>
@@ -391,6 +513,7 @@ export function NodiaryWorkspace() {
             className="fixed inset-y-0 right-0 z-50 block w-[min(380px,calc(100vw-24px))] shadow-[0_20px_70px_rgba(36,33,29,0.2)] xl:static xl:z-auto xl:block xl:w-[360px] xl:shadow-none"
             aiInput={aiInput}
             aiState={state.ai}
+            enabledScopes={enabledAiScopes}
             notice={aiNotice}
             onApprove={(actionId) =>
               setState((current) => approveAiAction(current, actionId))
@@ -401,6 +524,13 @@ export function NodiaryWorkspace() {
             }
             onClose={() => setAiPanelOpen(false)}
             onSend={sendAiCommand}
+            onToggleScope={(scope) =>
+              setEnabledAiScopes((scopes) =>
+                scopes.includes(scope)
+                  ? scopes.filter((candidate) => candidate !== scope)
+                  : [...scopes, scope]
+              )
+            }
             onUndo={() => setState((current) => undoLastAiAction(current))}
           />
         </>
@@ -691,7 +821,7 @@ function NodiarySidebar({
             QUICK CAPTURE
             <input
               ref={quickCaptureInputRef}
-              className="mt-2 h-10 w-full rounded border border-[#dedad1] bg-white px-2 text-[12px] text-[#24211d] outline-none placeholder:text-[#9a948a] focus:border-[#2f5d62]"
+              className="mt-2 h-10 w-full rounded border border-[#dedad1] bg-white px-2 text-[12px] text-[#24211d] outline-none placeholder:text-[#9a948a] focus:border-[var(--nodiary-accent)]"
               onChange={(event) => onQuickCapture(event.target.value)}
               placeholder="떠오른 생각을 Inbox로"
               value={quickCapture}
@@ -700,7 +830,7 @@ function NodiarySidebar({
         </form>
 
         {workspaceNotice ? (
-          <div className="mt-2 rounded-md bg-white px-2.5 py-2 text-[12px] leading-5 text-[#2f5d62]">
+          <div className="mt-2 rounded-md bg-white px-2.5 py-2 text-[12px] leading-5 text-[var(--nodiary-accent)]">
             {workspaceNotice}
           </div>
         ) : null}
@@ -895,7 +1025,7 @@ function MiniCalendar({
               className={cn(
                 "flex h-8 w-full items-center justify-center rounded-md text-[12px] leading-none text-[#6f6a61] hover:bg-white",
                 day.hasEvent && "bg-[#ebe7df]",
-                day.isSelected && "bg-[#2f5d62] font-semibold text-white hover:bg-[#2f5d62]"
+                day.isSelected && "bg-[var(--nodiary-accent)] font-semibold text-white hover:bg-[var(--nodiary-accent)]"
               )}
               onClick={() => onSelectDate(day.isoDate)}
               onDragOver={(event) => event.preventDefault()}
@@ -1008,6 +1138,7 @@ function DocumentCanvas({
   blocks,
   documentWidthClass,
   isSlashOpen,
+  onAddDatabaseRow,
   onCloseSlash,
   onInsertParagraph,
   onMoveBlock,
@@ -1028,6 +1159,7 @@ function DocumentCanvas({
   pageProperties: ReturnType<typeof defaultNodiaryState>["activePage"]["properties"];
   pageTitle: string;
   slashOpen: boolean;
+  onAddDatabaseRow: (databaseBlockId: string) => void;
   onMoveBlock: (blockId: string, beforeBlockId: string) => void;
   onMoveDatabaseRow: (
     databaseBlockId: string,
@@ -1073,6 +1205,7 @@ function DocumentCanvas({
           <DocumentBlock
             block={block}
             key={block.id}
+            onAddDatabaseRow={onAddDatabaseRow}
             onMoveBlock={onMoveBlock}
             onMoveDatabaseRow={onMoveDatabaseRow}
             onOpenSlash={onOpenSlash}
@@ -1117,6 +1250,7 @@ function DocumentCanvas({
 
 function DocumentBlock({
   block,
+  onAddDatabaseRow,
   onMoveBlock,
   onMoveDatabaseRow,
   onOpenSlash,
@@ -1126,6 +1260,7 @@ function DocumentBlock({
   onUpdateTodo
 }: {
   block: NodiaryBlock;
+  onAddDatabaseRow: (databaseBlockId: string) => void;
   onMoveBlock: (blockId: string, beforeBlockId: string) => void;
   onMoveDatabaseRow: (
     databaseBlockId: string,
@@ -1212,13 +1347,14 @@ function DocumentBlock({
           <DatabaseViewBlock
             blockId={block.id}
             database={block.database}
+            onAddRow={onAddDatabaseRow}
             onMoveRow={onMoveDatabaseRow}
             onSwitchView={onSwitchDatabaseView}
           />
         ) : null}
         {block.type === "ai" ? (
           <div className="rounded-md border border-[#dedad1] bg-white px-3 py-2 text-[14px] text-[#6f6a61]">
-            <Bot className="mr-2 inline h-4 w-4 text-[#2f5d62]" />
+            <Bot className="mr-2 inline h-4 w-4 text-[var(--nodiary-accent)]" />
             {block.text}
           </div>
         ) : null}
@@ -1308,7 +1444,7 @@ function TodoBlock({
         className={cn(
           "flex h-9 w-9 shrink-0 items-center justify-center rounded border sm:h-[22px] sm:w-[22px]",
           block.checked
-            ? "border-[#2f5d62] bg-[#2f5d62] text-white"
+            ? "border-[var(--nodiary-accent)] bg-[var(--nodiary-accent)] text-white"
             : "border-[#cfc9be] bg-white"
         )}
         onClick={(event) => {
@@ -1434,11 +1570,13 @@ function handleSlashMenuKeyDown(
 function DatabaseViewBlock({
   blockId,
   database,
+  onAddRow,
   onMoveRow,
   onSwitchView
 }: {
   blockId: string;
   database: DatabaseBlock;
+  onAddRow: (databaseBlockId: string) => void;
   onMoveRow: (
     databaseBlockId: string,
     rowId: string,
@@ -1455,14 +1593,24 @@ function DatabaseViewBlock({
             {database.name}
           </div>
         </div>
-        <div className="flex shrink-0 overflow-x-auto rounded border border-[#dedad1] bg-[#f7f5f0] p-0.5">
-          {(
-            [
-              ["table", "표", Table2],
-              ["board", "보드", Columns3],
-              ["calendar", "캘린더", CalendarDays]
-            ] as const
-          ).map(([view, label, Icon]) => (
+        <div className="flex shrink-0 items-center gap-2 overflow-x-auto">
+          <button
+            aria-label="새 행 추가"
+            className="flex h-8 shrink-0 items-center gap-1.5 rounded border border-[#dedad1] bg-white px-2 text-[12px] font-medium text-[#3a3630] hover:bg-[#f7f5f0]"
+            onClick={() => onAddRow(blockId)}
+            type="button"
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+            새 행
+          </button>
+          <div className="flex shrink-0 rounded border border-[#dedad1] bg-[#f7f5f0] p-0.5">
+            {(
+              [
+                ["table", "표", Table2],
+                ["board", "보드", Columns3],
+                ["calendar", "캘린더", CalendarDays]
+              ] as const
+            ).map(([view, label, Icon]) => (
             <button
               aria-selected={database.activeView === view}
               className={cn(
@@ -1477,11 +1625,16 @@ function DatabaseViewBlock({
               <Icon className="h-3.5 w-3.5" aria-hidden="true" />
               {label}
             </button>
-          ))}
+            ))}
+          </div>
         </div>
       </div>
       {database.activeView === "table" ? (
-        <DatabaseTable database={database} />
+        <DatabaseTable
+          blockId={blockId}
+          database={database}
+          onMoveRow={onMoveRow}
+        />
       ) : null}
       {database.activeView === "board" ? (
         <DatabaseBoard
@@ -1491,19 +1644,51 @@ function DatabaseViewBlock({
         />
       ) : null}
       {database.activeView === "calendar" ? (
-        <DatabaseCalendar rows={database.rows} />
+        <DatabaseCalendar
+          blockId={blockId}
+          database={database}
+          onMoveRow={onMoveRow}
+        />
       ) : null}
     </section>
   );
 }
 
-function DatabaseTable({ database }: { database: DatabaseBlock }) {
+function DatabaseTable({
+  blockId,
+  database,
+  onMoveRow
+}: {
+  blockId: string;
+  database: DatabaseBlock;
+  onMoveRow: (
+    databaseBlockId: string,
+    rowId: string,
+    patch: Parameters<typeof moveDatabaseRow>[3]
+  ) => void;
+}) {
   return (
-    <div className="overflow-x-auto">
+    <div>
+      <div className="space-y-2 p-3 md:hidden">
+        {database.rows.map((row) => (
+          <EditableDatabaseCard
+            blockId={blockId}
+            key={row.id}
+            onMoveRow={onMoveRow}
+            row={row}
+          />
+        ))}
+      </div>
       <table
         aria-label={`${database.name} 테이블`}
-        className="min-w-[620px] w-full border-collapse text-left text-[13px]"
+        className="hidden w-full table-fixed border-collapse text-left text-[13px] md:table"
       >
+        <colgroup>
+          <col className="w-[42%]" />
+          <col className="w-[18%]" />
+          <col className="w-[18%]" />
+          <col className="w-[22%]" />
+        </colgroup>
         <thead className="bg-[#fbfaf7] text-[#6f6a61]">
           <tr>
             {database.fields.map((field) => (
@@ -1525,23 +1710,142 @@ function DatabaseTable({ database }: { database: DatabaseBlock }) {
                 event.dataTransfer.setData("text/plain", row.id);
               }}
             >
-              <td className="border-b border-[#eeeae3] px-3 py-2 font-medium text-[#24211d]">
-                {row.title}
+              <td className="border-b border-[#eeeae3] px-3 py-2">
+                <input
+                  aria-label={`DB 행 제목: ${row.title}`}
+                  className="h-8 w-full rounded border border-transparent bg-transparent px-2 font-medium text-[#24211d] outline-none hover:border-[#dedad1] focus:border-[var(--nodiary-accent)] focus:bg-white"
+                  onChange={(event) =>
+                    onMoveRow(blockId, row.id, {
+                      title: event.target.value
+                    })
+                  }
+                  value={row.title}
+                />
               </td>
-              <td className="border-b border-[#eeeae3] px-3 py-2 text-[#6f6a61]">
-                {databaseStatusLabel[row.status]}
+              <td className="border-b border-[#eeeae3] px-3 py-2">
+                <select
+                  aria-label={`DB 행 상태: ${row.title}`}
+                  className="h-8 w-full rounded border border-transparent bg-transparent px-2 text-[#6f6a61] outline-none hover:border-[#dedad1] focus:border-[var(--nodiary-accent)] focus:bg-white"
+                  onChange={(event) =>
+                    onMoveRow(blockId, row.id, {
+                      status: event.target.value as DatabaseRow["status"]
+                    })
+                  }
+                  value={row.status}
+                >
+                  {Object.entries(databaseStatusLabel).map(([status, label]) => (
+                    <option key={status} value={status}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
               </td>
-              <td className="border-b border-[#eeeae3] px-3 py-2 text-[#6f6a61]">
-                {row.owner}
+              <td className="border-b border-[#eeeae3] px-3 py-2">
+                <input
+                  aria-label={`DB 행 담당: ${row.title}`}
+                  className="h-8 w-full rounded border border-transparent bg-transparent px-2 text-[#6f6a61] outline-none hover:border-[#dedad1] focus:border-[var(--nodiary-accent)] focus:bg-white"
+                  onChange={(event) =>
+                    onMoveRow(blockId, row.id, {
+                      owner: event.target.value
+                    })
+                  }
+                  value={row.owner}
+                />
               </td>
-              <td className="border-b border-[#eeeae3] px-3 py-2 text-[#6f6a61]">
-                {row.date}
+              <td className="border-b border-[#eeeae3] px-3 py-2">
+                <input
+                  aria-label={`DB 행 날짜: ${row.title}`}
+                  className="h-8 w-full rounded border border-transparent bg-transparent px-2 text-[#6f6a61] outline-none hover:border-[#dedad1] focus:border-[var(--nodiary-accent)] focus:bg-white"
+                  onChange={(event) =>
+                    onMoveRow(blockId, row.id, {
+                      date: event.target.value
+                    })
+                  }
+                  type="date"
+                  value={row.date}
+                />
               </td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function EditableDatabaseCard({
+  blockId,
+  onMoveRow,
+  row
+}: {
+  blockId: string;
+  row: DatabaseRow;
+  onMoveRow: (
+    databaseBlockId: string,
+    rowId: string,
+    patch: Parameters<typeof moveDatabaseRow>[3]
+  ) => void;
+}) {
+  return (
+    <article
+      aria-label={`DB 행 드래그: ${row.title}`}
+      className="rounded border border-[#dedad1] bg-white p-3"
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.setData("text/nodiary-db-row", row.id);
+        event.dataTransfer.setData("text/plain", row.id);
+      }}
+    >
+      <input
+        aria-label={`모바일 DB 행 제목: ${row.title}`}
+        className="h-9 w-full rounded border border-[#dedad1] px-2 text-[13px] font-medium text-[#24211d] outline-none focus:border-[var(--nodiary-accent)]"
+        onChange={(event) =>
+          onMoveRow(blockId, row.id, {
+            title: event.target.value
+          })
+        }
+        value={row.title}
+      />
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <select
+          aria-label={`모바일 DB 행 상태: ${row.title}`}
+          className="h-9 rounded border border-[#dedad1] bg-white px-2 text-[12px] text-[#6f6a61] outline-none focus:border-[var(--nodiary-accent)]"
+          onChange={(event) =>
+            onMoveRow(blockId, row.id, {
+              status: event.target.value as DatabaseRow["status"]
+            })
+          }
+          value={row.status}
+        >
+          {Object.entries(databaseStatusLabel).map(([status, label]) => (
+            <option key={status} value={status}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <input
+          aria-label={`모바일 DB 행 날짜: ${row.title}`}
+          className="h-9 rounded border border-[#dedad1] px-2 text-[12px] text-[#6f6a61] outline-none focus:border-[var(--nodiary-accent)]"
+          onChange={(event) =>
+            onMoveRow(blockId, row.id, {
+              date: event.target.value
+            })
+          }
+          type="date"
+          value={row.date}
+        />
+      </div>
+      <input
+        aria-label={`모바일 DB 행 담당: ${row.title}`}
+        className="mt-2 h-9 w-full rounded border border-[#dedad1] px-2 text-[12px] text-[#6f6a61] outline-none focus:border-[var(--nodiary-accent)]"
+        onChange={(event) =>
+          onMoveRow(blockId, row.id, {
+            owner: event.target.value
+          })
+        }
+        value={row.owner}
+      />
+    </article>
   );
 }
 
@@ -1616,52 +1920,147 @@ function DatabaseBoard({
   );
 }
 
-function DatabaseCalendar({ rows }: { rows: DatabaseRow[] }) {
+function DatabaseCalendar({
+  blockId,
+  database,
+  onMoveRow
+}: {
+  blockId: string;
+  database: DatabaseBlock;
+  onMoveRow: (
+    databaseBlockId: string,
+    rowId: string,
+    patch: Parameters<typeof moveDatabaseRow>[3]
+  ) => void;
+}) {
+  const days = useMemo(() => createDatabaseCalendarDays(database.rows), [database.rows]);
+
   return (
-    <div className="grid grid-cols-1 gap-2 p-3 sm:grid-cols-2">
-      {rows.map((row) => (
-        <button
-          aria-label={`DB 행 드래그: ${row.title}`}
-          className="flex items-center justify-between rounded border border-[#dedad1] px-3 py-2 text-left text-[13px] hover:bg-[#fbfaf7]"
-          draggable
-          key={row.id}
-          onDragStart={(event) => {
-            event.dataTransfer.setData("text/nodiary-db-row", row.id);
-            event.dataTransfer.setData("text/plain", row.id);
-          }}
-          type="button"
-        >
-          <span className="min-w-0 truncate font-medium text-[#24211d]">
-            {row.title}
-          </span>
-          <span className="shrink-0 text-[#6f6a61]">{row.date}</span>
-        </button>
-      ))}
+    <div className="p-3">
+      <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-[#8c867c]">
+        {["월", "화", "수", "목", "금", "토", "일"].map((day) => (
+          <div className="h-6 leading-6" key={day}>
+            {day}
+          </div>
+        ))}
+      </div>
+      <div
+        aria-label={`${database.name} 캘린더`}
+        className="grid grid-cols-7 gap-1"
+        role="grid"
+      >
+        {days.map((day) => (
+          <div
+            aria-label={day.isoDate}
+            className={cn(
+              "min-h-[86px] rounded border border-[#eeeae3] bg-[#fbfaf7] p-1.5",
+              day.isCurrentMonth ? "text-[#24211d]" : "text-[#aaa399]",
+              day.isToday && "border-[var(--nodiary-accent)] bg-[var(--nodiary-accent-soft)]"
+            )}
+            key={day.isoDate}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault();
+              const rowId =
+                event.dataTransfer.getData("text/nodiary-db-row") ||
+                event.dataTransfer.getData("text/plain");
+
+              if (rowId) {
+                onMoveRow(blockId, rowId, {
+                  date: day.isoDate
+                });
+              }
+            }}
+            role="gridcell"
+          >
+            <div className="mb-1 text-[11px] font-semibold leading-none">{day.label}</div>
+            <div className="space-y-1">
+              {day.rows.map((row) => (
+                <button
+                  aria-label={`DB 행 드래그: ${row.title}`}
+                  className="block w-full truncate rounded bg-white px-1.5 py-1 text-left text-[11px] font-medium text-[#3a3630] shadow-[0_1px_1px_rgba(36,33,29,0.04)] hover:bg-[#f7f5f0]"
+                  draggable
+                  key={row.id}
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData("text/nodiary-db-row", row.id);
+                    event.dataTransfer.setData("text/plain", row.id);
+                  }}
+                  type="button"
+                >
+                  {row.title}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
+}
+
+function createDatabaseCalendarDays(rows: DatabaseRow[]) {
+  const rowsByDate = rows.reduce<Record<string, DatabaseRow[]>>((groups, row) => {
+    groups[row.date] = [...(groups[row.date] ?? []), row];
+    return groups;
+  }, {});
+  const days: Array<{
+    isoDate: string;
+    isCurrentMonth: boolean;
+    isToday: boolean;
+    label: string;
+    rows: DatabaseRow[];
+  }> = [];
+
+  for (let day = 1; day <= 30; day += 1) {
+    const isoDate = `2026-06-${String(day).padStart(2, "0")}`;
+    days.push({
+      isoDate,
+      isCurrentMonth: true,
+      isToday: isoDate === "2026-06-16",
+      label: String(day),
+      rows: rowsByDate[isoDate] ?? []
+    });
+  }
+
+  for (let day = 1; day <= 5; day += 1) {
+    const isoDate = `2026-07-${String(day).padStart(2, "0")}`;
+    days.push({
+      isoDate,
+      isCurrentMonth: false,
+      isToday: false,
+      label: String(day),
+      rows: rowsByDate[isoDate] ?? []
+    });
+  }
+
+  return days;
 }
 
 function AiOperatorPanel({
   className,
   aiInput,
   aiState,
+  enabledScopes,
   notice,
   onApprove,
   onChangeAiInput,
   onClose,
   onReject,
   onSend,
+  onToggleScope,
   onUndo
 }: {
   className?: string;
   aiInput: string;
   aiState: ReturnType<typeof defaultNodiaryState>["ai"];
+  enabledScopes: AiContextScope[];
   notice: string;
   onApprove: (actionId: string) => void;
   onChangeAiInput: (value: string) => void;
   onClose: () => void;
   onReject: (actionId: string) => void;
   onSend: () => void;
+  onToggleScope: (scope: AiContextScope) => void;
   onUndo: () => void;
 }) {
   const pendingActions = aiState.runs.flatMap((run) =>
@@ -1677,11 +2076,11 @@ function AiOperatorPanel({
     >
       <div className="flex h-9 items-center justify-between px-1">
         <div className="flex items-center gap-2 text-[14px] font-semibold text-[#24211d]">
-          <Bot className="h-4 w-4 text-[#2f5d62]" aria-hidden="true" />
+          <Bot className="h-4 w-4 text-[var(--nodiary-accent)]" aria-hidden="true" />
           AI 글쓰기
         </div>
         <div className="flex items-center gap-1">
-          <span className="rounded bg-[#e4efed] px-2 py-1 text-[11px] font-medium text-[#2f5d62]">
+          <span className="rounded bg-[var(--nodiary-accent-soft)] px-2 py-1 text-[11px] font-medium text-[var(--nodiary-accent)]">
             승인 후 실행
           </span>
           <button
@@ -1707,17 +2106,30 @@ function AiOperatorPanel({
         </div>
       ) : null}
       <div className="mt-2 flex flex-wrap gap-2">
-        {["현재 페이지", "선택 블록", "왼쪽 캘린더", "장기 메모리"].map((scope) => (
-          <span
-            className="rounded border border-[#dedad1] bg-white px-2 py-1 text-[11px] text-[#6f6a61]"
-            key={scope}
+        {aiContextScopes.map((scope) => {
+          const isEnabled = enabledScopes.includes(scope.id);
+
+          return (
+          <button
+            aria-label={`${scope.label} 컨텍스트 ${isEnabled ? "포함" : "제외"}`}
+            aria-pressed={isEnabled}
+            className={cn(
+              "rounded border px-2 py-1 text-[11px]",
+              isEnabled
+                ? "border-[var(--nodiary-accent)] bg-[var(--nodiary-accent-soft)] font-medium text-[var(--nodiary-accent)]"
+                : "border-[#dedad1] bg-white text-[#6f6a61] hover:bg-[#f7f5f0]"
+            )}
+            key={scope.id}
+            onClick={() => onToggleScope(scope.id)}
+            type="button"
           >
-            {scope}
-          </span>
-        ))}
+            {scope.label}
+          </button>
+          );
+        })}
       </div>
       <button
-        className="mt-3 h-10 w-full rounded-md bg-[#2f5d62] text-[13px] font-semibold text-white hover:bg-[#284f53]"
+        className="mt-3 h-10 w-full rounded-md bg-[var(--nodiary-accent)] text-[13px] font-semibold text-white hover:bg-[var(--nodiary-accent-hover)]"
         onClick={onSend}
         type="button"
       >
@@ -1747,7 +2159,7 @@ function AiOperatorPanel({
             <article className="rounded border border-[#dedad1] p-3" key={action.id}>
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <div className="text-[12px] font-semibold text-[#2f5d62]">
+                  <div className="text-[12px] font-semibold text-[var(--nodiary-accent)]">
                     {getOperatorToolLabel(action.toolName)}
                   </div>
                   <div className="mt-1 text-[13px] font-medium text-[#24211d]">
@@ -1777,7 +2189,7 @@ function AiOperatorPanel({
                       거절
                     </button>
                     <button
-                      className="h-8 rounded bg-[#2f5d62] px-3 text-[12px] font-medium text-white"
+                      className="h-8 rounded bg-[var(--nodiary-accent)] px-3 text-[12px] font-medium text-white"
                       onClick={() => onApprove(action.id)}
                       type="button"
                     >
@@ -2033,9 +2445,19 @@ function settingButtonClass(isActive: boolean) {
   return cn(
     "h-8 rounded border px-3 text-[12px]",
     isActive
-      ? "border-[#2f5d62] bg-[#e4efed] font-medium text-[#2f5d62]"
+      ? "border-[var(--nodiary-accent)] bg-[var(--nodiary-accent-soft)] font-medium text-[var(--nodiary-accent)]"
       : "border-[#dedad1] bg-white text-[#6f6a61] hover:bg-[#f7f5f0]"
   );
+}
+
+function getWorkspaceThemeStyle(accent: NodiaryState["preferences"]["accent"]) {
+  const tokens = accentTokens[accent];
+
+  return {
+    "--nodiary-accent": tokens.accent,
+    "--nodiary-accent-hover": tokens.accentHover,
+    "--nodiary-accent-soft": tokens.accentSoft
+  } as CSSProperties;
 }
 
 function loadStoredWorkspaceState(): NodiaryState {
@@ -2052,23 +2474,76 @@ function loadStoredWorkspaceState(): NodiaryState {
       return fallback;
     }
 
-    const stored = JSON.parse(rawValue) as Partial<NodiaryState>;
-
-    return {
-      ...fallback,
-      ...stored,
-      pages: stored.pages ?? {
-        [stored.activePage?.id ?? fallback.activePage.id]:
-          stored.activePage ?? fallback.activePage
-      },
-      activePage: stored.activePage ?? fallback.activePage,
-      sidebarCalendar: stored.sidebarCalendar ?? fallback.sidebarCalendar,
-      ai: stored.ai ?? fallback.ai,
-      preferences: stored.preferences ?? fallback.preferences
-    };
+    return readHydratedWorkspaceState(JSON.parse(rawValue)) ?? fallback;
   } catch {
     return fallback;
   }
+}
+
+function readHydratedWorkspaceState(value: unknown): NodiaryState | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const fallback = defaultNodiaryState();
+  const stored = value as Partial<NodiaryState>;
+
+  if (!isRecord(stored.activePage) || !Array.isArray(stored.activePage.blocks)) {
+    return undefined;
+  }
+
+  const activePage = {
+    ...fallback.activePage,
+    ...stored.activePage
+  };
+
+  return {
+    ...fallback,
+    ...stored,
+    workspace: {
+      ...fallback.workspace,
+      ...(isRecord(stored.workspace) ? stored.workspace : {})
+    },
+    pageTree: Array.isArray(stored.pageTree) ? stored.pageTree : fallback.pageTree,
+    pages: {
+      ...fallback.pages,
+      ...(isRecord(stored.pages) ? stored.pages : {}),
+      [activePage.id]: activePage
+    },
+    activePage,
+    sidebarCalendar: isRecord(stored.sidebarCalendar)
+      ? {
+          ...fallback.sidebarCalendar,
+          ...stored.sidebarCalendar,
+          days: Array.isArray(stored.sidebarCalendar.days)
+            ? stored.sidebarCalendar.days
+            : fallback.sidebarCalendar.days,
+          schedule: Array.isArray(stored.sidebarCalendar.schedule)
+            ? stored.sidebarCalendar.schedule
+            : fallback.sidebarCalendar.schedule,
+          movedEvents: isRecord(stored.sidebarCalendar.movedEvents)
+            ? stored.sidebarCalendar.movedEvents
+            : fallback.sidebarCalendar.movedEvents
+        }
+      : fallback.sidebarCalendar,
+    ai: isRecord(stored.ai)
+      ? {
+          ...fallback.ai,
+          ...stored.ai,
+          runs: Array.isArray(stored.ai.runs) ? stored.ai.runs : fallback.ai.runs,
+          undoLog: Array.isArray(stored.ai.undoLog)
+            ? stored.ai.undoLog
+            : fallback.ai.undoLog,
+          memories: Array.isArray(stored.ai.memories)
+            ? stored.ai.memories
+            : fallback.ai.memories
+        }
+      : fallback.ai,
+    preferences: {
+      ...fallback.preferences,
+      ...(isRecord(stored.preferences) ? stored.preferences : {})
+    }
+  };
 }
 
 function storeWorkspaceState(state: NodiaryState) {
@@ -2081,6 +2556,25 @@ function storeWorkspaceState(state: NodiaryState) {
   } catch {
     // Local storage may be disabled; the in-memory workspace still works.
   }
+}
+
+async function saveWorkspaceStateToApi(state: NodiaryState) {
+  try {
+    await fetch("/api/nodiary/workspace", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        ...getNodiarySessionHeaders()
+      },
+      body: JSON.stringify({ state })
+    });
+  } catch {
+    // Keep the local workspace responsive even if the desktop API is not ready.
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function loadStoredCaptures(): CapturedItem[] {
@@ -2106,6 +2600,21 @@ function storeCaptures(items: CapturedItem[]) {
   } catch {
     // Ignore quota/storage failures without exposing local contents.
   }
+}
+
+function getSelectedBlockContext(state: NodiaryState) {
+  const selectedBlock =
+    state.activePage.blocks.find((block) => block.id === "memo-body") ??
+    state.activePage.blocks.find((block) => block.type === "paragraph") ??
+    state.activePage.blocks[0];
+
+  return [
+    selectedBlock?.title,
+    selectedBlock?.text
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, 12000);
 }
 
 function getOperatorToolLabel(toolName: string) {

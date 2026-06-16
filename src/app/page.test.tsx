@@ -1,6 +1,8 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
 import userEvent from "@testing-library/user-event";
+
+import { defaultNodiaryState } from "@/features/nodiary/nodiary-model";
 
 import HomePage from "./page";
 
@@ -56,7 +58,101 @@ describe("HomePage", () => {
     expect(screen.getByText("검토")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "캘린더" }));
-    expect(screen.getByText("2026-06-20")).toBeInTheDocument();
+    const databaseCalendar = screen.getByRole("grid", {
+      name: "고쳐야 할 50개 리스트 캘린더"
+    });
+    expect(databaseCalendar).toBeInTheDocument();
+    expect(within(databaseCalendar).getByText("20")).toBeInTheDocument();
+  });
+
+  it("hydrates the workspace from the app API and saves preference changes back", async () => {
+    const user = userEvent.setup();
+    const serverState = defaultNodiaryState();
+    const hydratedState = {
+      ...serverState,
+      activePage: {
+        ...serverState.activePage,
+        title: "서버에서 온 오늘 문서"
+      },
+      pages: {
+        ...serverState.pages,
+        [serverState.activePage.id]: {
+          ...serverState.activePage,
+          title: "서버에서 온 오늘 문서"
+        }
+      }
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input, init) => {
+        if (String(input) === "/api/nodiary/workspace" && !init) {
+          return {
+            ok: true,
+            json: async () => ({ state: hydratedState })
+          };
+        }
+
+        return {
+          ok: true,
+          json: async () => ({ ok: true })
+        };
+      })
+    );
+
+    render(<HomePage />);
+
+    expect(
+      await screen.findByRole("heading", { name: "서버에서 온 오늘 문서" })
+    ).toBeInTheDocument();
+
+    await user.click(screen.getAllByRole("button", { name: "설정 열기" })[0]);
+    await user.click(screen.getByRole("button", { name: "조밀하게" }));
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/nodiary/workspace",
+        expect.objectContaining({
+          method: "PUT"
+        })
+      );
+    });
+  });
+
+  it("lets the AI operator toggle live context scopes before sending", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    const selectedBlockScope = screen.getByRole("button", { name: "선택 블록 컨텍스트 포함" });
+
+    expect(selectedBlockScope).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(selectedBlockScope);
+    expect(selectedBlockScope).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(selectedBlockScope);
+    expect(selectedBlockScope).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("adds and edits database rows from the inserted database block", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    await user.click(screen.getByLabelText("빈 블록 입력"));
+    await user.keyboard("/");
+    await user.click(screen.getByRole("menuitem", { name: "데이터베이스 추가" }));
+
+    await user.click(screen.getByRole("button", { name: "새 행 추가" }));
+
+    const titleInput = await screen.findByLabelText("DB 행 제목: 새 작업");
+    expect(titleInput).toBeInTheDocument();
+
+    await user.clear(titleInput);
+    await user.type(titleInput, "하네스 수정 확인");
+
+    expect(titleInput).toHaveValue("하네스 수정 확인");
   });
 
   it("uses the AI operator panel for approval-gated changes and undo", async () => {
