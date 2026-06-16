@@ -5,7 +5,10 @@ node_modules/
 coverage/
 .superpowers/
 out/
-build/
+build/*
+!build/icon.svg
+!build/icon.icns
+!build/icon.ico
 dist/
 release/
 tsconfig.tsbuildinfo

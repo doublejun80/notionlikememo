@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
@@ -14,6 +15,11 @@ const electronPath = require("electron");
 const projectRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const electronMainPath = resolve(projectRoot, "electron/main.cjs");
 const devServerUrl = resolveDevServerUrl(process.env);
+const sessionToken = process.env.NODIARY_SESSION_TOKEN || randomUUID();
+const childEnv = {
+  ...process.env,
+  NODIARY_SESSION_TOKEN: sessionToken
+};
 
 let nextProcess;
 let electronProcess;
@@ -58,7 +64,7 @@ if (await isServerReachable(devServerUrl)) {
     getNextDevArgs(devServerUrl),
     {
       cwd: projectRoot,
-      env: process.env,
+      env: childEnv,
       stdio: "inherit"
     }
   );
@@ -76,7 +82,7 @@ if (await isServerReachable(devServerUrl)) {
 electronProcess = spawn(electronPath, [electronMainPath], {
   cwd: projectRoot,
   env: {
-    ...process.env,
+    ...childEnv,
     NODIARY_DEV_SERVER_URL: devServerUrl,
     MYPLAN_DEV_SERVER_URL: devServerUrl
   },

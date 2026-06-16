@@ -7,7 +7,7 @@ describe("buildSeedRecords", () => {
   it("maps the current mock data into database seed records", () => {
     const seed = buildSeedRecords(myplanData);
 
-    expect(seed.workspace.title).toBe("MyPlan");
+    expect(seed.workspace.title).toBe("Nodiary");
     expect(seed.projects).toHaveLength(myplanData.projects.length);
     expect(seed.tasks).toHaveLength(myplanData.tasks.length);
     expect(seed.calendarEvents).toHaveLength(myplanData.events.length);

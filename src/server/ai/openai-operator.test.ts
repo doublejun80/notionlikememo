@@ -50,6 +50,35 @@ describe("OpenAI operator boundary", () => {
     expect(parsed.memories).toContain("사용자는 문서-first UI를 원한다.");
   });
 
+  it("caps and validates structured model output before returning it to the UI", () => {
+    const parsed = parseOpenAiOperatorResponse({
+      output_text: JSON.stringify({
+        summary: "x".repeat(500),
+        actions: [
+          {
+            toolName: "updateBlock",
+            argsJson: { blockId: "memo" },
+            diffJson: { after: "정리" },
+            riskLevel: "medium",
+            undoJson: {}
+          },
+          {
+            toolName: "dangerousTool",
+            argsJson: {},
+            diffJson: {},
+            riskLevel: "critical",
+            undoJson: {}
+          }
+        ],
+        memories: Array.from({ length: 20 }, (_, index) => `memory-${index}`)
+      })
+    });
+
+    expect(parsed.summary.length).toBeLessThanOrEqual(240);
+    expect(parsed.actions).toHaveLength(1);
+    expect(parsed.memories).toHaveLength(8);
+  });
+
   it("sends the API key only as an Authorization header and never returns it", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
@@ -84,5 +113,32 @@ describe("OpenAI operator boundary", () => {
       })
     );
     expect(JSON.stringify(result)).not.toContain("unit-test-secret");
+  });
+
+  it("aborts slow OpenAI requests", async () => {
+    const fetchMock = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        })
+    ) as unknown as typeof fetch;
+
+    await expect(
+      requestOpenAiOperatorPlan(
+        {
+          command: "정리해줘.",
+          pageTitle: "오늘의 계획",
+          selectedText: "",
+          memory: []
+        },
+        {
+          apiKey: "unit-test-secret",
+          fetch: fetchMock,
+          timeoutMs: 1
+        }
+      )
+    ).rejects.toThrow("aborted");
   });
 });

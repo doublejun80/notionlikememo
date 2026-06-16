@@ -4,6 +4,8 @@ import { defaultNodiaryState } from "@/features/nodiary/nodiary-model";
 
 import { loadNodiaryState, saveNodiaryState } from "./nodiary-repository";
 
+type RepositoryClientForTest = NonNullable<Parameters<typeof saveNodiaryState>[1]>;
+
 describe("nodiary repository", () => {
   it("persists the document workspace through Prisma repository calls", async () => {
     const client = {
@@ -26,7 +28,10 @@ describe("nodiary repository", () => {
       }
     };
 
-    await saveNodiaryState(defaultNodiaryState(), client);
+    await saveNodiaryState(
+      defaultNodiaryState(),
+      client as unknown as RepositoryClientForTest
+    );
 
     expect(client.workspace.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -59,6 +64,31 @@ describe("nodiary repository", () => {
         })
       })
     );
+  });
+
+  it("wraps destructive block replacement in a Prisma transaction when available", async () => {
+    const txClient = {
+      workspace: { upsert: vi.fn() },
+      page: { upsert: vi.fn() },
+      block: { deleteMany: vi.fn(), createMany: vi.fn() },
+      aiMemory: { deleteMany: vi.fn(), createMany: vi.fn() },
+      appPreference: { upsert: vi.fn() }
+    };
+    const client = {
+      ...txClient,
+      $transaction: vi.fn(async (callback) => callback(txClient))
+    };
+
+    await saveNodiaryState(
+      defaultNodiaryState(),
+      client as unknown as RepositoryClientForTest
+    );
+
+    expect(client.$transaction).toHaveBeenCalledTimes(1);
+    expect(txClient.block.deleteMany).toHaveBeenCalledWith({
+      where: { pageId: "today" }
+    });
+    expect(txClient.block.createMany).toHaveBeenCalled();
   });
 
   it("hydrates Nodiary state from Prisma records with default fallbacks", async () => {
@@ -122,7 +152,7 @@ describe("nodiary repository", () => {
       }
     };
 
-    const state = await loadNodiaryState(client);
+    const state = await loadNodiaryState(client as unknown as RepositoryClientForTest);
 
     expect(state.workspace.subtitle).toBe("DB backed");
     expect(state.pageTree[0]?.children?.[0]?.title).toBe("하위 노트");
@@ -142,6 +172,56 @@ describe("nodiary repository", () => {
       documentWidth: "wide",
       rightAiPanel: "closed",
       approvalStrictness: "strict"
+    });
+  });
+
+  it("loads blocks for the selected fallback page instead of hard-coding today", async () => {
+    const client = {
+      workspace: {
+        findUnique: vi.fn(async () => ({
+          id: "nodiary-local",
+          title: "Nodiary",
+          subtitle: "DB backed"
+        }))
+      },
+      page: {
+        findMany: vi.fn(async () => [
+          {
+            id: "first-db-page",
+            parentId: null,
+            title: "DB 첫 페이지",
+            sortOrder: 0
+          }
+        ])
+      },
+      block: {
+        findMany: vi.fn(async () => [
+          {
+            id: "first-page-block",
+            type: "PARAGRAPH",
+            contentJson: { text: "선택된 페이지의 블록" },
+            checked: false,
+            sortOrder: 0
+          }
+        ])
+      },
+      aiMemory: { findMany: vi.fn(async () => []) },
+      appPreference: { findFirst: vi.fn(async () => null) }
+    };
+
+    const state = await loadNodiaryState(client as unknown as RepositoryClientForTest);
+
+    expect(client.block.findMany).toHaveBeenCalledWith({
+      where: { pageId: "first-db-page" },
+      orderBy: { sortOrder: "asc" }
+    });
+    expect(state.activePage).toMatchObject({
+      id: "first-db-page",
+      title: "DB 첫 페이지"
+    });
+    expect(state.activePage.blocks[0]).toMatchObject({
+      id: "first-page-block",
+      text: "선택된 페이지의 블록"
     });
   });
 });

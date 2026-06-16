@@ -6,7 +6,7 @@ import type {
   TaskItem
 } from "../src/data/myplan-data";
 
-const WORKSPACE_ID = "workspace-default";
+const WORKSPACE_ID = "nodiary-local";
 const TODAY_DATE_KEY = "2026-06-15";
 const KST_OFFSET = "+09:00";
 
@@ -33,8 +33,8 @@ export function buildSeedRecords(data: MyPlanSeedSource) {
   return {
     workspace: {
       id: WORKSPACE_ID,
-      title: "MyPlan",
-      subtitle: "개인 작업공간",
+      title: "Nodiary",
+      subtitle: "문서 중심 개인 작업공간",
       locale: "ko-KR",
       timezone: "Asia/Seoul"
     },

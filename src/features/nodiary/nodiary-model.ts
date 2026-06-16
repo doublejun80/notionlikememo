@@ -57,6 +57,16 @@ export type PageNode = {
   children?: PageNode[];
 };
 
+export type NodiaryPage = {
+  id: string;
+  title: string;
+  properties: Array<{
+    label: string;
+    value: string;
+  }>;
+  blocks: NodiaryBlock[];
+};
+
 export type CalendarDay = {
   id: string;
   label: string;
@@ -80,6 +90,7 @@ export type SidebarCalendar = {
   selectedDate: string;
   days: CalendarDay[];
   schedule: CalendarEvent[];
+  movedEvents: Record<string, CalendarEvent>;
 };
 
 export type AiProposedAction = {
@@ -92,6 +103,8 @@ export type AiProposedAction = {
   undoPayload: {
     removeBlockIds?: string[];
     restoreBlocks?: NodiaryBlock[];
+    restoreActivePageBlocks?: NodiaryBlock[];
+    restoreSidebarCalendar?: SidebarCalendar;
   };
   applyPayload: {
     insertAfterBlockId?: string;
@@ -139,15 +152,8 @@ export type NodiaryState = {
     subtitle: string;
   };
   pageTree: PageNode[];
-  activePage: {
-    id: string;
-    title: string;
-    properties: Array<{
-      label: string;
-      value: string;
-    }>;
-    blocks: NodiaryBlock[];
-  };
+  pages: Record<string, NodiaryPage>;
+  activePage: NodiaryPage;
   sidebarCalendar: SidebarCalendar;
   ai: AiState;
   preferences: AppPreference;
@@ -208,6 +214,8 @@ const projectDatabase: DatabaseBlock = {
 };
 
 export function defaultNodiaryState(): NodiaryState {
+  const activePage = createTodayPage();
+
   return {
     workspace: {
       name: "Nodiary",
@@ -236,56 +244,11 @@ export function defaultNodiaryState(): NodiaryState {
       { id: "personal-log", title: "개인 기록", expanded: false },
       { id: "archive", title: "아카이브", expanded: false }
     ],
-    activePage: {
-      id: "today",
-      title: "오늘의 계획",
-      properties: [
-        { label: "상태", value: "진행중" },
-        { label: "날짜", value: "2026년 6월 15일 월요일" },
-        { label: "캘린더", value: "왼쪽 미니 캘린더와 연결" }
-      ],
-      blocks: [
-        {
-          id: "today-todos",
-          type: "heading",
-          title: "오늘 해야 할 것"
-        },
-        {
-          id: "todo-ui",
-          type: "todo",
-          text: "Notion처럼 보이는 기본 편집 화면부터 제대로 만든다.",
-          checked: false
-        },
-        {
-          id: "todo-project",
-          type: "todo",
-          text: "프로젝트 DB는 첫 화면에서 빼고, 필요할 때 slash 메뉴로만 추가한다.",
-          checked: false
-        },
-        {
-          id: "todo-openai",
-          type: "todo",
-          text: "OpenAI 키는 .env.local에 저장했고 화면에 노출하지 않는다.",
-          checked: true
-        },
-        {
-          id: "owner-note",
-          type: "callout",
-          text: "이 화면의 주인공은 문서다. AI와 DB는 옆에서 도와야지, 첫 화면을 잡아먹으면 안 된다."
-        },
-        {
-          id: "memo",
-          type: "heading",
-          title: "메모"
-        },
-        {
-          id: "memo-body",
-          type: "paragraph",
-          text: "Notion-like의 첫인상은 사이드바, 큰 페이지 제목, 빈 여백, 블록 핸들, slash 메뉴에서 온다."
-        }
-      ]
+    pages: {
+      [activePage.id]: activePage
     },
-    sidebarCalendar: buildJuneCalendar("2026-06-15"),
+    activePage,
+    sidebarCalendar: buildJuneCalendar("2026-06-16"),
     ai: {
       panelInput: "",
       runs: [],
@@ -317,27 +280,181 @@ export function defaultNodiaryState(): NodiaryState {
   };
 }
 
+function createTodayPage(): NodiaryPage {
+  return {
+    id: "today",
+    title: "오늘의 계획",
+    properties: [
+      { label: "상태", value: "진행중" },
+      { label: "날짜", value: "2026년 6월 16일 화요일" },
+      { label: "캘린더", value: "왼쪽 미니 캘린더와 연결" }
+    ],
+    blocks: [
+      {
+        id: "today-todos",
+        type: "heading",
+        title: "오늘 해야 할 것"
+      },
+      {
+        id: "todo-ui",
+        type: "todo",
+        text: "Notion처럼 보이는 기본 편집 화면부터 제대로 만든다.",
+        checked: false
+      },
+      {
+        id: "todo-project",
+        type: "todo",
+        text: "프로젝트 DB는 첫 화면에서 빼고, 필요할 때 slash 메뉴로만 추가한다.",
+        checked: false
+      },
+      {
+        id: "todo-openai",
+        type: "todo",
+        text: "OpenAI 키는 .env.local에 저장했고 화면에 노출하지 않는다.",
+        checked: true
+      },
+      {
+        id: "owner-note",
+        type: "callout",
+        text: "이 화면의 주인공은 문서다. AI와 DB는 옆에서 도와야지, 첫 화면을 잡아먹으면 안 된다."
+      },
+      {
+        id: "memo",
+        type: "heading",
+        title: "메모"
+      },
+      {
+        id: "memo-body",
+        type: "paragraph",
+        text: "Notion-like의 첫인상은 사이드바, 큰 페이지 제목, 빈 여백, 블록 핸들, slash 메뉴에서 온다."
+      }
+    ]
+  };
+}
+
 export function insertBlockFromSlash(
   state: NodiaryState,
   afterBlockId: string,
   insertType: SlashInsertType
 ): NodiaryState {
-  const block = createBlockFromSlash(insertType);
+  const block = createBlockFromSlash(insertType, state);
   const afterIndex = state.activePage.blocks.findIndex(
     (candidate) => candidate.id === afterBlockId
   );
   const insertIndex = afterIndex >= 0 ? afterIndex + 1 : state.activePage.blocks.length;
 
+  return withActivePage(state, {
+    ...state.activePage,
+    blocks: [
+      ...state.activePage.blocks.slice(0, insertIndex),
+      block,
+      ...state.activePage.blocks.slice(insertIndex)
+    ]
+  });
+}
+
+export function insertParagraphBlock(
+  state: NodiaryState,
+  afterBlockId: string,
+  text: string
+): NodiaryState {
+  const existingIds = new Set(state.activePage.blocks.map((block) => block.id));
+  const block: NodiaryBlock = {
+    id: createUniqueId(existingIds, "paragraph"),
+    type: "paragraph",
+    text
+  };
+  const afterIndex = state.activePage.blocks.findIndex(
+    (candidate) => candidate.id === afterBlockId
+  );
+  const insertIndex = afterIndex >= 0 ? afterIndex + 1 : state.activePage.blocks.length;
+
+  return withActivePage(state, {
+    ...state.activePage,
+    blocks: [
+      ...state.activePage.blocks.slice(0, insertIndex),
+      block,
+      ...state.activePage.blocks.slice(insertIndex)
+    ]
+  });
+}
+
+export function updateBlockText(
+  state: NodiaryState,
+  blockId: string,
+  text: string
+): NodiaryState {
+  return withActivePage(state, {
+    ...state.activePage,
+    blocks: state.activePage.blocks.map((block) =>
+      block.id === blockId ? { ...block, text } : block
+    )
+  });
+}
+
+export function updateTodoBlock(
+  state: NodiaryState,
+  blockId: string,
+  patch: {
+    checked?: boolean;
+    text?: string;
+  }
+): NodiaryState {
+  return withActivePage(state, {
+    ...state.activePage,
+    blocks: state.activePage.blocks.map((block) =>
+      block.id === blockId
+        ? {
+            ...block,
+            checked: patch.checked ?? block.checked,
+            text: patch.text ?? block.text
+          }
+        : block
+    )
+  });
+}
+
+export function updateBlockTitle(
+  state: NodiaryState,
+  blockId: string,
+  title: string
+): NodiaryState {
+  return withActivePage(state, {
+    ...state.activePage,
+    blocks: state.activePage.blocks.map((block) =>
+      block.id === blockId ? { ...block, title } : block
+    )
+  });
+}
+
+export function createNewPage(state: NodiaryState): NodiaryState {
+  const existingIds = new Set(flattenPageNodes(state.pageTree).map((node) => node.id));
+  const pageId = createUniqueId(existingIds, "new-page");
+  const page: NodiaryPage = {
+    id: pageId,
+    title: "새 페이지",
+    properties: [
+      { label: "상태", value: "문서" },
+      { label: "날짜", value: "2026년 6월 16일 화요일" },
+      { label: "캘린더", value: "왼쪽 미니 캘린더와 연결" }
+    ],
+    blocks: createPageTemplate("새 페이지")
+  };
+  const node: PageNode = {
+    id: pageId,
+    title: page.title,
+    expanded: false
+  };
+
   return {
     ...state,
-    activePage: {
-      ...state.activePage,
-      blocks: [
-        ...state.activePage.blocks.slice(0, insertIndex),
-        block,
-        ...state.activePage.blocks.slice(insertIndex)
-      ]
-    }
+    pageTree: [...state.pageTree, node],
+    pages: {
+      ...getStatePages(state),
+      [state.activePage.id]: state.activePage,
+      [page.id]: page
+    },
+    activePage: page
   };
 }
 
@@ -346,11 +463,9 @@ export function switchDatabaseView(
   databaseBlockId: string,
   view: DatabaseViewType
 ): NodiaryState {
-  return {
-    ...state,
-    activePage: {
-      ...state.activePage,
-      blocks: state.activePage.blocks.map((block) => {
+  return withActivePage(state, {
+    ...state.activePage,
+    blocks: state.activePage.blocks.map((block) => {
         if (block.id !== databaseBlockId || !block.database) {
           return block;
         }
@@ -363,8 +478,7 @@ export function switchDatabaseView(
           }
         };
       })
-    }
-  };
+  });
 }
 
 export function selectCalendarDate(
@@ -376,12 +490,67 @@ export function selectCalendarDate(
     sidebarCalendar: {
       ...state.sidebarCalendar,
       selectedDate: isoDate,
-      days: state.sidebarCalendar.days.map((day) => ({
-        ...day,
-        isSelected: day.isoDate === isoDate
-      })),
-      schedule: getScheduleForDate(isoDate)
+      days: buildCalendarDaysWithMoves(state.sidebarCalendar, isoDate),
+      schedule: getScheduleForCalendar(state.sidebarCalendar, isoDate)
     }
+  };
+}
+
+export function selectPage(
+  state: NodiaryState,
+  pageId: string
+): NodiaryState {
+  if (pageId === state.activePage.id) {
+    return state;
+  }
+
+  const pageNode = findPageNode(state.pageTree, pageId);
+
+  if (!pageNode) {
+    return state;
+  }
+
+  const pages = {
+    ...getStatePages(state),
+    [state.activePage.id]: state.activePage
+  };
+  const targetPage = pages[pageId] ?? createPageFromNode(pageNode);
+
+  return {
+    ...state,
+    pages: {
+      ...pages,
+      [targetPage.id]: targetPage
+    },
+    activePage: targetPage
+  };
+}
+
+export function updatePageTitle(
+  state: NodiaryState,
+  title: string
+): NodiaryState {
+  const nextTitle = title.trim() || state.activePage.title;
+
+  return withActivePage(
+    {
+      ...state,
+      pageTree: updatePageNodeTitle(state.pageTree, state.activePage.id, nextTitle)
+    },
+    {
+      ...state.activePage,
+      title: nextTitle
+    }
+  );
+}
+
+export function togglePageNodeExpanded(
+  state: NodiaryState,
+  nodeId: string
+): NodiaryState {
+  return {
+    ...state,
+    pageTree: togglePageTreeNode(state.pageTree, nodeId)
   };
 }
 
@@ -408,17 +577,14 @@ export function moveBlock(
   );
   const insertIndex = beforeIndex >= 0 ? beforeIndex : remainingBlocks.length;
 
-  return {
-    ...state,
-    activePage: {
-      ...state.activePage,
-      blocks: [
-        ...remainingBlocks.slice(0, insertIndex),
-        movingBlock,
-        ...remainingBlocks.slice(insertIndex)
-      ]
-    }
-  };
+  return withActivePage(state, {
+    ...state.activePage,
+    blocks: [
+      ...remainingBlocks.slice(0, insertIndex),
+      movingBlock,
+      ...remainingBlocks.slice(insertIndex)
+    ]
+  });
 }
 
 export function movePageNode(
@@ -457,11 +623,9 @@ export function moveDatabaseRow(
     index?: number;
   }
 ): NodiaryState {
-  return {
-    ...state,
-    activePage: {
-      ...state.activePage,
-      blocks: state.activePage.blocks.map((block) => {
+  return withActivePage(state, {
+    ...state.activePage,
+    blocks: state.activePage.blocks.map((block) => {
         if (block.id !== databaseBlockId || !block.database) {
           return block;
         }
@@ -474,10 +638,10 @@ export function moveDatabaseRow(
 
         const updatedRow: DatabaseRow = {
           ...row,
-          ...(patch.title ? { title: patch.title } : {}),
-          ...(patch.status ? { status: patch.status } : {}),
-          ...(patch.owner ? { owner: patch.owner } : {}),
-          ...(patch.date ? { date: patch.date } : {})
+          ...(patch.title !== undefined ? { title: patch.title } : {}),
+          ...(patch.status !== undefined ? { status: patch.status } : {}),
+          ...(patch.owner !== undefined ? { owner: patch.owner } : {}),
+          ...(patch.date !== undefined ? { date: patch.date } : {})
         };
         const remainingRows = block.database.rows.filter(
           (candidate) => candidate.id !== rowId
@@ -496,6 +660,79 @@ export function moveDatabaseRow(
           }
         };
       })
+  });
+}
+
+export function requestCalendarEventMove(
+  state: NodiaryState,
+  eventId: string,
+  patch: {
+    date: string;
+    time?: string;
+  }
+): NodiaryState {
+  const event = findCalendarEvent(state, eventId);
+
+  if (!event) {
+    return state;
+  }
+
+  const targetSchedule = getScheduleForCalendar(state.sidebarCalendar, patch.date)
+    .filter((candidate) => candidate.id !== eventId);
+  const riskLevel = getCalendarMoveRisk(event, targetSchedule);
+
+  if (riskLevel !== "high") {
+    return moveCalendarEvent(state, eventId, patch);
+  }
+
+  const runIndex = state.ai.runs.length + 1;
+  const action: AiProposedAction = {
+    id: `calendar-action-${runIndex}`,
+    toolName: "updateCalendarEvent",
+    summary: `${event.title} 일정을 ${patch.date} ${patch.time ?? event.time}로 이동합니다.`,
+    diff: JSON.stringify(
+      {
+        before: {
+          date: event.date ?? "2026-06-16",
+          time: event.time,
+          source: event.source
+        },
+        after: {
+          date: patch.date,
+          time: patch.time ?? event.time,
+          conflictRisk: riskLevel
+        }
+      },
+      null,
+      2
+    ),
+    riskLevel,
+    approvalStatus: "pending",
+    applyPayload: {
+      operation: {
+        toolName: "updateCalendarEvent",
+        argsJson: {
+          eventId,
+          date: patch.date,
+          time: patch.time
+        }
+      }
+    },
+    undoPayload: {}
+  };
+  const run: AiRun = {
+    id: `calendar-run-${runIndex}`,
+    command: `${event.title} 일정 이동`,
+    status: "awaiting_approval",
+    modelRoute: "planner",
+    actions: [action]
+  };
+
+  return {
+    ...state,
+    ai: {
+      ...state.ai,
+      runs: [run, ...state.ai.runs]
     }
   };
 }
@@ -514,9 +751,20 @@ export function moveCalendarEvent(
     return state;
   }
 
-  const targetSchedule = getScheduleForDate(patch.date).filter(
-    (candidate) => candidate.id !== eventId && !candidate.id.startsWith("schedule-empty-")
-  );
+  const movedEvents = state.sidebarCalendar.movedEvents ?? {};
+  const targetSchedule = getScheduleForCalendar(
+    {
+      ...state.sidebarCalendar,
+      movedEvents: {
+        ...movedEvents,
+        [eventId]: {
+          ...event,
+          date: patch.date
+        }
+      }
+    },
+    patch.date
+  ).filter((candidate) => candidate.id !== eventId);
   const conflictRisk = getCalendarMoveRisk(event, targetSchedule);
   const movedEvent: CalendarEvent = {
     ...event,
@@ -529,13 +777,31 @@ export function moveCalendarEvent(
     ...state,
     sidebarCalendar: {
       ...state.sidebarCalendar,
+      movedEvents: {
+        ...movedEvents,
+        [eventId]: movedEvent
+      },
       selectedDate: patch.date,
-      days: state.sidebarCalendar.days.map((day) => ({
-        ...day,
-        isSelected: day.isoDate === patch.date,
-        hasEvent: day.isoDate === patch.date ? true : day.hasEvent
-      })),
-      schedule: [movedEvent, ...targetSchedule]
+      days: buildCalendarDaysWithMoves(
+        {
+          ...state.sidebarCalendar,
+          movedEvents: {
+            ...movedEvents,
+            [eventId]: movedEvent
+          }
+        },
+        patch.date
+      ),
+      schedule: getScheduleForCalendar(
+        {
+          ...state.sidebarCalendar,
+          movedEvents: {
+            ...movedEvents,
+            [eventId]: movedEvent
+          }
+        },
+        patch.date
+      )
     }
   };
 }
@@ -666,7 +932,8 @@ export function approveAiAction(
     return state;
   }
 
-  const appliedState = applyAiActionPayload(state, action);
+  const runtimeAction = attachRuntimeUndoPayload(state, action);
+  const appliedState = applyAiActionPayload(state, runtimeAction);
 
   return {
     ...appliedState,
@@ -675,7 +942,10 @@ export function approveAiAction(
       runs: updateAiAction(state.ai.runs, actionId, {
         approvalStatus: "approved"
       }),
-      undoLog: [{ ...action, approvalStatus: "approved" }, ...state.ai.undoLog]
+      undoLog: [
+        { ...runtimeAction, approvalStatus: "approved" },
+        ...state.ai.undoLog
+      ]
     }
   };
 }
@@ -684,6 +954,12 @@ export function rejectAiAction(
   state: NodiaryState,
   actionId: string
 ): NodiaryState {
+  const action = findAiAction(state, actionId);
+
+  if (!action || action.approvalStatus !== "pending") {
+    return state;
+  }
+
   return {
     ...state,
     ai: {
@@ -704,27 +980,34 @@ export function undoLastAiAction(state: NodiaryState): NodiaryState {
 
   const removeIds = new Set(lastAction.undoPayload.removeBlockIds ?? []);
   const restoreBlocks = lastAction.undoPayload.restoreBlocks ?? [];
+  const restoredActiveBlocks =
+    lastAction.undoPayload.restoreActivePageBlocks ??
+    restoreBlocks.reduce(
+      (blocks, restoreBlock) =>
+        blocks.map((block) =>
+          block.id === restoreBlock.id ? restoreBlock : block
+        ),
+      state.activePage.blocks.filter((block) => !removeIds.has(block.id))
+    );
 
-  return {
-    ...state,
-    activePage: {
-      ...state.activePage,
-      blocks: restoreBlocks.reduce(
-        (blocks, restoreBlock) =>
-          blocks.map((block) =>
-            block.id === restoreBlock.id ? restoreBlock : block
-          ),
-        state.activePage.blocks.filter((block) => !removeIds.has(block.id))
-      )
+  return withActivePage(
+    {
+      ...state,
+      sidebarCalendar:
+        lastAction.undoPayload.restoreSidebarCalendar ?? state.sidebarCalendar,
+      ai: {
+        ...state.ai,
+        runs: updateAiAction(state.ai.runs, lastAction.id, {
+          approvalStatus: "undone"
+        }),
+        undoLog: remainingUndoLog
+      }
     },
-    ai: {
-      ...state.ai,
-      runs: updateAiAction(state.ai.runs, lastAction.id, {
-        approvalStatus: "undone"
-      }),
-      undoLog: remainingUndoLog
+    {
+      ...state.activePage,
+      blocks: restoredActiveBlocks
     }
-  };
+  );
 }
 
 export function updatePreference(
@@ -740,52 +1023,109 @@ export function updatePreference(
   };
 }
 
-function createBlockFromSlash(insertType: SlashInsertType): NodiaryBlock {
+function createBlockFromSlash(
+  insertType: SlashInsertType,
+  state: NodiaryState
+): NodiaryBlock {
+  const existingIds = new Set(state.activePage.blocks.map((block) => block.id));
+
   switch (insertType) {
     case "heading":
       return {
-        id: `heading-${Date.now()}`,
+        id: createUniqueId(existingIds, "heading"),
         type: "heading",
         title: "제목 2"
       };
     case "todo":
       return {
-        id: `todo-${Date.now()}`,
+        id: createUniqueId(existingIds, "todo"),
         type: "todo",
         text: "할 일 목록",
         checked: false
       };
     case "callout":
       return {
-        id: `callout-${Date.now()}`,
+        id: createUniqueId(existingIds, "callout"),
         type: "callout",
         text: "중요한 메모를 여기에 남깁니다."
       };
-    case "database":
+    case "database": {
+      const databaseId = createUniqueId(existingIds, "project-db");
       return {
-        id: "project-db",
+        id: databaseId,
         type: "database",
         title: projectDatabase.name,
-        database: { ...projectDatabase, rows: [...projectDatabase.rows] }
+        database: {
+          ...projectDatabase,
+          id: databaseId,
+          rows: [...projectDatabase.rows]
+        }
       };
+    }
     case "ai":
       return {
-        id: `ai-${Date.now()}`,
+        id: createUniqueId(existingIds, "ai"),
         type: "ai",
         text: "이 블록을 AI에게 편집 요청"
       };
     case "paragraph":
     default:
       return {
-        id: `paragraph-${Date.now()}`,
+        id: createUniqueId(existingIds, "paragraph"),
         type: "paragraph",
         text: ""
       };
   }
 }
 
+function createPageTemplate(title: string): NodiaryBlock[] {
+  return [
+    {
+      id: `${slugifyId(title)}-heading`,
+      type: "heading",
+      title
+    },
+    {
+      id: `${slugifyId(title)}-body`,
+      type: "paragraph",
+      text: "이 페이지의 계획, 메모, 데이터베이스 블록을 여기에 작성합니다."
+    }
+  ];
+}
+
+function createPageFromNode(node: PageNode): NodiaryPage {
+  return {
+    id: node.id,
+    title: node.title,
+    properties: [
+      { label: "상태", value: "문서" },
+      { label: "날짜", value: "2026년 6월 16일 화요일" },
+      { label: "캘린더", value: "왼쪽 미니 캘린더와 연결" }
+    ],
+    blocks: createPageTemplate(node.title)
+  };
+}
+
+function getStatePages(state: NodiaryState): Record<string, NodiaryPage> {
+  return state.pages ?? { [state.activePage.id]: state.activePage };
+}
+
+function withActivePage(
+  state: NodiaryState,
+  activePage: NodiaryPage
+): NodiaryState {
+  return {
+    ...state,
+    pages: {
+      ...getStatePages(state),
+      [activePage.id]: activePage
+    },
+    activePage
+  };
+}
+
 function buildJuneCalendar(selectedDate: string): SidebarCalendar {
-  const eventDates = new Set(["2026-06-05", "2026-06-10", "2026-06-12", "2026-06-15", "2026-06-18", "2026-06-23", "2026-06-26"]);
+  const eventDates = new Set(["2026-06-05", "2026-06-10", "2026-06-12", "2026-06-16", "2026-06-18", "2026-06-23", "2026-06-26"]);
   const days: CalendarDay[] = [];
 
   for (let day = 1; day <= 30; day += 1) {
@@ -794,7 +1134,7 @@ function buildJuneCalendar(selectedDate: string): SidebarCalendar {
       id: isoDate,
       label: String(day),
       isoDate,
-      isToday: isoDate === "2026-06-15",
+      isToday: isoDate === "2026-06-16",
       isSelected: isoDate === selectedDate,
       hasEvent: eventDates.has(isoDate)
     });
@@ -816,13 +1156,14 @@ function buildJuneCalendar(selectedDate: string): SidebarCalendar {
     monthLabel: "2026년 6월",
     selectedDate,
     days,
-    schedule: getScheduleForDate(selectedDate)
+    schedule: getScheduleForDate(selectedDate),
+    movedEvents: {}
   };
 }
 
 function getScheduleForDate(isoDate: string): CalendarEvent[] {
   const schedules: Record<string, CalendarEvent[]> = {
-    "2026-06-15": [
+    "2026-06-16": [
       {
         id: "schedule-1",
         time: "10:00",
@@ -852,16 +1193,49 @@ function getScheduleForDate(isoDate: string): CalendarEvent[] {
     ]
   };
 
-  return (
-    schedules[isoDate] ?? [
-      {
-        id: `schedule-empty-${isoDate}`,
-        time: "종일",
-        title: "연결된 일정 없음",
-        source: "nodiary"
-      }
-    ]
+  return (schedules[isoDate] ?? []).map((event) => ({
+    ...event,
+    date: isoDate
+  }));
+}
+
+function getScheduleForCalendar(
+  calendar: SidebarCalendar,
+  isoDate: string
+): CalendarEvent[] {
+  const movedEvents = calendar.movedEvents ?? {};
+  const movedEventIds = new Set(Object.keys(movedEvents));
+  const movedForDate = Object.values(movedEvents).filter(
+    (event) => event.date === isoDate
   );
+  const baseEvents = getScheduleForDate(isoDate).filter(
+    (event) => !movedEventIds.has(event.id)
+  );
+
+  return [...movedForDate, ...baseEvents];
+}
+
+function buildCalendarDaysWithMoves(
+  calendar: SidebarCalendar,
+  selectedDate: string
+): CalendarDay[] {
+  return calendar.days.map((day) => ({
+    ...day,
+    isSelected: day.isoDate === selectedDate,
+    hasEvent: getScheduleForCalendar(calendar, day.isoDate).length > 0
+  }));
+}
+
+function createUniqueId(existingIds: Set<string>, prefix: string) {
+  let index = 0;
+  let candidate = prefix;
+
+  while (existingIds.has(candidate)) {
+    index += 1;
+    candidate = `${prefix}-${index}`;
+  }
+
+  return candidate;
 }
 
 function insertDatabaseRowAtStatusIndex(
@@ -978,6 +1352,28 @@ function insertPageNode(
   };
 }
 
+function togglePageTreeNode(nodes: PageNode[], nodeId: string): PageNode[] {
+  return nodes.map((node) => ({
+    ...node,
+    expanded: node.id === nodeId ? !node.expanded : node.expanded,
+    children: node.children ? togglePageTreeNode(node.children, nodeId) : undefined
+  }));
+}
+
+function updatePageNodeTitle(
+  nodes: PageNode[],
+  nodeId: string,
+  title: string
+): PageNode[] {
+  return nodes.map((node) => ({
+    ...node,
+    title: node.id === nodeId ? title : node.title,
+    children: node.children
+      ? updatePageNodeTitle(node.children, nodeId, title)
+      : undefined
+  }));
+}
+
 function isDescendantPageNode(
   nodes: PageNode[],
   nodeId: string,
@@ -1010,6 +1406,13 @@ function findPageNode(nodes: PageNode[], nodeId: string): PageNode | undefined {
   return undefined;
 }
 
+function flattenPageNodes(nodes: PageNode[]): PageNode[] {
+  return nodes.flatMap((node) => [
+    node,
+    ...(node.children ? flattenPageNodes(node.children) : [])
+  ]);
+}
+
 function findCalendarEvent(
   state: NodiaryState,
   eventId: string
@@ -1023,7 +1426,7 @@ function findCalendarEvent(
   }
 
   for (const day of state.sidebarCalendar.days) {
-    const event = getScheduleForDate(day.isoDate).find(
+    const event = getScheduleForCalendar(state.sidebarCalendar, day.isoDate).find(
       (candidate) => candidate.id === eventId
     );
 
@@ -1033,6 +1436,20 @@ function findCalendarEvent(
   }
 
   return undefined;
+}
+
+function attachRuntimeUndoPayload(
+  state: NodiaryState,
+  action: AiProposedAction
+): AiProposedAction {
+  return {
+    ...action,
+    undoPayload: {
+      ...action.undoPayload,
+      restoreActivePageBlocks: state.activePage.blocks,
+      restoreSidebarCalendar: state.sidebarCalendar
+    }
+  };
 }
 
 function getOperatorRestoreBlocks(
@@ -1082,17 +1499,14 @@ function applyAiActionPayload(
   );
   const insertIndex = afterIndex >= 0 ? afterIndex + 1 : state.activePage.blocks.length;
 
-  return {
-    ...state,
-    activePage: {
-      ...state.activePage,
-      blocks: [
-        ...state.activePage.blocks.slice(0, insertIndex),
-        ...insertBlocks,
-        ...state.activePage.blocks.slice(insertIndex)
-      ]
-    }
-  };
+  return withActivePage(state, {
+    ...state.activePage,
+    blocks: [
+      ...state.activePage.blocks.slice(0, insertIndex),
+      ...insertBlocks,
+      ...state.activePage.blocks.slice(insertIndex)
+    ]
+  });
 }
 
 function applyOperatorOperation(
@@ -1170,15 +1584,13 @@ function updateBlockTextFromArgs(
   const text = readStringArg(args, "text") ?? readStringArg(args, "content");
   const title = readStringArg(args, "title");
 
-  if (!text && !title) {
+  if (text === undefined && title === undefined) {
     return state;
   }
 
-  return {
-    ...state,
-    activePage: {
-      ...state.activePage,
-      blocks: state.activePage.blocks.map((block) => {
+  return withActivePage(state, {
+    ...state.activePage,
+    blocks: state.activePage.blocks.map((block) => {
         if (block.id !== blockId) {
           return block;
         }
@@ -1189,8 +1601,7 @@ function updateBlockTextFromArgs(
           title: title ?? block.title
         };
       })
-    }
-  };
+  });
 }
 
 function readStringArg(
@@ -1247,10 +1658,26 @@ function updateAiAction(
   actionId: string,
   patch: Partial<AiProposedAction>
 ): AiRun[] {
-  return runs.map((run) => ({
-    ...run,
-    actions: run.actions.map((action) =>
+  return runs.map((run) => {
+    const actions = run.actions.map((action) =>
       action.id === actionId ? { ...action, ...patch } : action
-    )
-  }));
+    );
+
+    return {
+      ...run,
+      actions,
+      status: actions.some((action) => action.approvalStatus === "pending")
+        ? "awaiting_approval"
+        : "completed"
+    };
+  });
+}
+
+function slugifyId(value: string) {
+  const slug = value
+    .toLowerCase()
+    .replace(/[^a-z0-9가-힣]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return slug || "page";
 }

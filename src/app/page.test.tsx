@@ -5,8 +5,13 @@ import userEvent from "@testing-library/user-event";
 import HomePage from "./page";
 
 describe("HomePage", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
+    window.localStorage.clear();
   });
 
   it("renders Nodiary as a document-first workspace instead of a project dashboard", () => {
@@ -31,7 +36,7 @@ describe("HomePage", () => {
     const dayButtons = within(calendar).getAllByRole("button");
 
     expect(dayButtons).toHaveLength(35);
-    expect(within(calendar).getByRole("button", { name: "2026-06-15 선택됨" }));
+    expect(within(calendar).getByRole("button", { name: "2026-06-16 선택됨" }));
     expect(screen.getByText("제품 기획서 정리")).toBeInTheDocument();
   });
 
@@ -40,7 +45,8 @@ describe("HomePage", () => {
 
     render(<HomePage />);
 
-    await user.click(screen.getByRole("button", { name: "slash 메뉴 열기" }));
+    await user.click(screen.getByLabelText("빈 블록 입력"));
+    await user.keyboard("/");
     await user.click(screen.getByRole("menuitem", { name: "데이터베이스 추가" }));
 
     expect(screen.getByText("고쳐야 할 50개 리스트")).toBeInTheDocument();
@@ -100,7 +106,7 @@ describe("HomePage", () => {
         method: "POST"
       })
     );
-    expect(screen.getByText("승인 대기")).toBeInTheDocument();
+    expect(screen.getAllByText("승인 대기").length).toBeGreaterThan(0);
     expect(
       await screen.findByText(/AI가 승인 후 반영한 문장/)
     ).toBeInTheDocument();
@@ -133,7 +139,23 @@ describe("HomePage", () => {
     );
     await user.click(screen.getByRole("button", { name: "AI에게 보내기" }));
 
+    expect(
+      await screen.findByText("OpenAI 연결에 실패해 로컬 초안으로 승인 큐를 만들었습니다.")
+    ).toBeInTheDocument();
     expect(await screen.findByText("+ AI 실행 계획 callout")).toBeInTheDocument();
+  });
+
+  it("saves quick capture items visibly in the sidebar inbox trail", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    await user.click(screen.getByRole("button", { name: "QUICK CAPTURE" }));
+    await user.type(screen.getByPlaceholderText("떠오른 생각을 Inbox로"), "빠른 생각");
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByText("Inbox에 빠른 메모를 저장했습니다.")).toBeInTheDocument();
+    expect(screen.getByText("빠른 생각")).toBeInTheDocument();
   });
 
   it("moves blocks, page nodes, database rows, and calendar events through drag drop", async () => {
@@ -141,49 +163,57 @@ describe("HomePage", () => {
 
     render(<HomePage />);
 
+    const blockTransfer = dataTransferStub();
     fireEvent.dragStart(screen.getByLabelText("블록 드래그: 메모 본문"), {
-      dataTransfer: dataTransferStub()
+      dataTransfer: blockTransfer
     });
     fireEvent.drop(screen.getByLabelText("블록 드롭 위치: 오늘 해야 할 것"), {
-      dataTransfer: dataTransferStub("memo-body")
+      dataTransfer: blockTransfer
     });
 
     const documentBlocks = screen.getAllByTestId("document-block");
     expect(documentBlocks[0]).toHaveTextContent("Notion-like의 첫인상");
 
+    const pageTransfer = dataTransferStub();
     fireEvent.dragStart(screen.getByLabelText("페이지 드래그: 고쳐야 할 50개"), {
-      dataTransfer: dataTransferStub()
+      dataTransfer: pageTransfer
     });
     fireEvent.drop(screen.getByLabelText("페이지 드롭 위치: 오늘의 계획"), {
-      dataTransfer: dataTransferStub("fix-list")
+      dataTransfer: pageTransfer
     });
 
     const todayTreeItem = screen.getByLabelText("페이지 드롭 위치: 오늘의 계획");
     expect(todayTreeItem.parentElement).toHaveTextContent("고쳐야 할 50개");
 
-    await user.click(screen.getByRole("button", { name: "slash 메뉴 열기" }));
+    await user.click(screen.getByLabelText("빈 블록 입력"));
+    await user.keyboard("/");
     await user.click(screen.getByRole("menuitem", { name: "데이터베이스 추가" }));
-    await user.click(screen.getByRole("tab", { name: "보드" }));
+    await user.click(screen.getAllByRole("tab", { name: "보드" }).at(-1)!);
 
+    const rowTransfer = dataTransferStub();
     fireEvent.dragStart(screen.getByLabelText("DB 행 드래그: 캘린더 충돌 처리 정책 정리"), {
-      dataTransfer: dataTransferStub()
+      dataTransfer: rowTransfer
     });
     fireEvent.drop(screen.getByLabelText("DB 상태 드롭: 진행"), {
-      dataTransfer: dataTransferStub("row-3")
+      dataTransfer: rowTransfer
     });
 
     const doingColumn = screen.getByLabelText("DB 상태 드롭: 진행");
     expect(doingColumn).toHaveTextContent("캘린더 충돌 처리 정책 정리");
 
+    const calendarTransfer = dataTransferStub();
     fireEvent.dragStart(screen.getByLabelText("일정 드래그: 디자인 리뷰"), {
-      dataTransfer: dataTransferStub()
+      dataTransfer: calendarTransfer
     });
     fireEvent.drop(screen.getByLabelText("2026-06-18"), {
-      dataTransfer: dataTransferStub("schedule-2")
+      dataTransfer: calendarTransfer
     });
 
+    expect(screen.getByText(/디자인 리뷰 일정을/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "승인" }));
+
     expect(screen.getByText("16:30")).toBeInTheDocument();
-    expect(screen.getByText("high risk")).toBeInTheDocument();
+    expect(screen.getByText("높은 위험")).toBeInTheDocument();
   });
 
   it("opens settings and updates personalization controls", async () => {
@@ -202,13 +232,13 @@ describe("HomePage", () => {
   });
 });
 
-function dataTransferStub(initialValue = "") {
-  let value = initialValue;
+function dataTransferStub() {
+  const values = new Map<string, string>();
 
   return {
-    getData: () => value,
-    setData: (_key: string, nextValue: string) => {
-      value = nextValue;
+    getData: (key: string) => values.get(key) ?? "",
+    setData: (key: string, nextValue: string) => {
+      values.set(key, nextValue);
     }
   };
 }

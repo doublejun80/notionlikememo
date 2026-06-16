@@ -1,4 +1,5 @@
 import { prisma } from "@/server/db";
+import { BlockType, Prisma, type PrismaClient } from "@prisma/client";
 import {
   defaultNodiaryState,
   type AppPreference,
@@ -11,29 +12,11 @@ import {
 export const NODIARY_WORKSPACE_ID = "nodiary-local";
 const PREFERENCE_ID = "nodiary-local-preferences";
 
-type RepositoryClient = {
-  workspace: {
-    findUnique?: (args: unknown) => Promise<WorkspaceRecord | null>;
-    upsert?: (args: unknown) => Promise<unknown>;
-  };
-  page: {
-    findMany?: (args: unknown) => Promise<PageRecord[]>;
-    upsert?: (args: unknown) => Promise<unknown>;
-  };
-  block: {
-    findMany?: (args: unknown) => Promise<BlockRecord[]>;
-    deleteMany?: (args: unknown) => Promise<unknown>;
-    createMany?: (args: unknown) => Promise<unknown>;
-  };
-  aiMemory: {
-    findMany?: (args: unknown) => Promise<AiMemoryRecord[]>;
-    deleteMany?: (args: unknown) => Promise<unknown>;
-    createMany?: (args: unknown) => Promise<unknown>;
-  };
-  appPreference: {
-    findFirst?: (args: unknown) => Promise<PreferenceRecord | null>;
-    upsert?: (args: unknown) => Promise<unknown>;
-  };
+type RepositoryClient = Pick<
+  PrismaClient,
+  "workspace" | "page" | "block" | "aiMemory" | "appPreference"
+> & {
+  $transaction?: PrismaClient["$transaction"];
 };
 
 type WorkspaceRecord = {
@@ -75,30 +58,26 @@ type PreferenceRecord = {
 };
 
 export async function loadNodiaryState(
-  client: RepositoryClient = prisma as unknown as RepositoryClient,
+  client: RepositoryClient = prisma,
   workspaceId = NODIARY_WORKSPACE_ID
 ): Promise<NodiaryState> {
   const base = defaultNodiaryState();
-  const [workspace, pages, blocks, memories, preferences] = await Promise.all([
-    client.workspace.findUnique?.({
+  const [workspace, pages, memories, preferences] = await Promise.all([
+    client.workspace.findUnique({
       where: { id: workspaceId }
-    }),
-    client.page.findMany?.({
+    }) as Promise<WorkspaceRecord | null>,
+    client.page.findMany({
       where: { workspaceId, archived: false },
       orderBy: [{ parentId: "asc" }, { sortOrder: "asc" }]
-    }),
-    client.block.findMany?.({
-      where: { pageId: base.activePage.id },
-      orderBy: { sortOrder: "asc" }
-    }),
-    client.aiMemory.findMany?.({
+    }) as Promise<PageRecord[]>,
+    client.aiMemory.findMany({
       where: { workspaceId, archivedAt: null },
       orderBy: { updatedAt: "desc" }
-    }),
-    client.appPreference.findFirst?.({
+    }) as Promise<AiMemoryRecord[]>,
+    client.appPreference.findFirst({
       where: { workspaceId },
       orderBy: { updatedAt: "desc" }
-    })
+    }) as Promise<PreferenceRecord | null>
   ]);
 
   if (!workspace) {
@@ -106,6 +85,12 @@ export async function loadNodiaryState(
   }
 
   const activePage = pages?.find((page) => page.id === base.activePage.id) ?? pages?.[0];
+  const blocks = activePage
+    ? ((await client.block.findMany({
+        where: { pageId: activePage.id },
+        orderBy: { sortOrder: "asc" }
+      })) as BlockRecord[])
+    : [];
 
   return {
     ...base,
@@ -139,10 +124,29 @@ export async function loadNodiaryState(
 
 export async function saveNodiaryState(
   state: NodiaryState,
-  client: RepositoryClient = prisma as unknown as RepositoryClient,
+  client: RepositoryClient = prisma,
   workspaceId = NODIARY_WORKSPACE_ID
 ) {
-  await client.workspace.upsert?.({
+  const save = async (tx: RepositoryClient) => {
+    await saveNodiaryStateInTransaction(state, tx, workspaceId);
+  };
+
+  if (typeof client.$transaction === "function") {
+    await client.$transaction(async (tx) => {
+      await save(tx as RepositoryClient);
+    });
+    return;
+  }
+
+  await save(client);
+}
+
+async function saveNodiaryStateInTransaction(
+  state: NodiaryState,
+  client: RepositoryClient,
+  workspaceId: string
+) {
+  await client.workspace.upsert({
     where: { id: workspaceId },
     update: {
       title: state.workspace.name,
@@ -157,7 +161,7 @@ export async function saveNodiaryState(
     }
   });
 
-  await client.page.upsert?.({
+  await client.page.upsert({
     where: { id: state.activePage.id },
     update: {
       title: state.activePage.title,
@@ -172,26 +176,28 @@ export async function saveNodiaryState(
     }
   });
 
-  await client.block.deleteMany?.({
+  await client.block.deleteMany({
     where: { pageId: state.activePage.id }
   });
-  await client.block.createMany?.({
+  await client.block.createMany({
     data: state.activePage.blocks.map((block, index) => ({
       id: block.id,
       pageId: state.activePage.id,
       parentBlockId: null,
       type: serializeBlockType(block.type),
       contentJson: serializeBlockContent(block),
-      metadataJson: block.database ? { databaseId: block.database.id } : null,
+      metadataJson: block.database
+        ? { databaseId: block.database.id }
+        : Prisma.JsonNull,
       checked: Boolean(block.checked),
       sortOrder: index
     }))
   });
 
-  await client.aiMemory.deleteMany?.({
+  await client.aiMemory.deleteMany({
     where: { workspaceId }
   });
-  await client.aiMemory.createMany?.({
+  await client.aiMemory.createMany({
     data: state.ai.memories.map((memory) => ({
       id: memory.id,
       workspaceId,
@@ -202,7 +208,7 @@ export async function saveNodiaryState(
     }))
   });
 
-  await client.appPreference.upsert?.({
+  await client.appPreference.upsert({
     where: { id: PREFERENCE_ID },
     update: serializePreferences(state.preferences),
     create: {
@@ -235,15 +241,15 @@ function deserializeBlock(record: BlockRecord): NodiaryBlock {
   };
 }
 
-function serializeBlockType(type: NodiaryBlock["type"]) {
-  const map: Record<NodiaryBlock["type"], string> = {
-    paragraph: "PARAGRAPH",
-    heading: "HEADING",
-    todo: "TODO",
-    callout: "CALLOUT",
-    divider: "DIVIDER",
-    database: "DATABASE",
-    ai: "AI_REQUEST"
+function serializeBlockType(type: NodiaryBlock["type"]): BlockType {
+  const map: Record<NodiaryBlock["type"], BlockType> = {
+    paragraph: BlockType.PARAGRAPH,
+    heading: BlockType.HEADING,
+    todo: BlockType.TODO,
+    callout: BlockType.CALLOUT,
+    divider: BlockType.DIVIDER,
+    database: BlockType.DATABASE,
+    ai: BlockType.AI_REQUEST
   };
 
   return map[type];

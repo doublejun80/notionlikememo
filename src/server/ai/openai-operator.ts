@@ -21,7 +21,24 @@ type RequestOptions = {
   apiKey: string;
   fetch?: typeof fetch;
   model?: string;
+  timeoutMs?: number;
 };
+
+const allowedToolNames = new Set([
+  "searchWorkspace",
+  "readPage",
+  "createPage",
+  "updateBlock",
+  "moveBlock",
+  "createDatabase",
+  "updateDatabaseRow",
+  "createCalendarEvent",
+  "updateCalendarEvent",
+  "writeAiMemory"
+]);
+const allowedRiskLevels = new Set(["low", "medium", "high"]);
+const MAX_OPERATOR_ACTIONS = 8;
+const MAX_OPERATOR_MEMORIES = 8;
 
 const operatorSchema = {
   type: "object",
@@ -117,14 +134,25 @@ export async function requestOpenAiOperatorPlan(
     options.model ?? process.env.OPENAI_MODEL ?? "gpt-5.5"
   );
   const fetchImpl = options.fetch ?? fetch;
-  const response = await fetchImpl("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${options.apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload)
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, options.timeoutMs ?? 30_000);
+  let response: Response;
+
+  try {
+    response = await fetchImpl("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${options.apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     throw new Error(`OpenAI operator request failed with ${response.status}`);
@@ -144,12 +172,94 @@ export function parseOpenAiOperatorResponse(response: unknown): OperatorPlan {
     };
   }
 
-  const parsed = JSON.parse(text) as OperatorPlan;
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return emptyOperatorPlan("모델 응답 JSON을 해석하지 못했습니다.");
+  }
+
+  return validateOperatorPlan(parsed);
+}
+
+function validateOperatorPlan(value: unknown): OperatorPlan {
+  if (!value || typeof value !== "object") {
+    return emptyOperatorPlan("모델 응답 구조가 올바르지 않습니다.");
+  }
+
+  const record = value as Record<string, unknown>;
+  const rawActions = Array.isArray(record.actions) ? record.actions : [];
+  const actions = rawActions
+    .map(readOperatorAction)
+    .filter((action): action is OperatorPlan["actions"][number] => Boolean(action))
+    .slice(0, MAX_OPERATOR_ACTIONS);
+  const memories = Array.isArray(record.memories)
+    ? record.memories
+        .filter((memory): memory is string => typeof memory === "string")
+        .slice(0, MAX_OPERATOR_MEMORIES)
+        .map((memory) => memory.slice(0, 500))
+    : [];
 
   return {
-    summary: parsed.summary,
-    actions: parsed.actions ?? [],
-    memories: parsed.memories ?? []
+    summary:
+      typeof record.summary === "string"
+        ? record.summary.slice(0, 240)
+        : "모델이 승인 가능한 변경안을 제안했습니다.",
+    actions,
+    memories
+  };
+}
+
+function readOperatorAction(value: unknown): OperatorPlan["actions"][number] | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  if (
+    typeof record.toolName !== "string" ||
+    !allowedToolNames.has(record.toolName) ||
+    typeof record.riskLevel !== "string" ||
+    !allowedRiskLevels.has(record.riskLevel) ||
+    !isPlainRecord(record.argsJson) ||
+    !isPlainRecord(record.diffJson) ||
+    !isPlainRecord(record.undoJson)
+  ) {
+    return undefined;
+  }
+
+  return {
+    toolName: record.toolName,
+    argsJson: limitRecord(record.argsJson),
+    diffJson: limitRecord(record.diffJson),
+    riskLevel: record.riskLevel as OperatorPlan["actions"][number]["riskLevel"],
+    undoJson: limitRecord(record.undoJson)
+  };
+}
+
+function emptyOperatorPlan(summary: string): OperatorPlan {
+  return {
+    summary,
+    actions: [],
+    memories: []
+  };
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function limitRecord(record: Record<string, unknown>) {
+  const serialized = JSON.stringify(record);
+
+  if (serialized.length <= 8_000) {
+    return record;
+  }
+
+  return {
+    truncated: true
   };
 }
 

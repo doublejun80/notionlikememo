@@ -10,6 +10,19 @@ const prisma = new PrismaClient();
 async function main() {
   const seed = buildSeedRecords(myplanData);
 
+  await prisma.aiExecutionLog.deleteMany();
+  await prisma.aiProposedAction.deleteMany();
+  await prisma.aiRun.deleteMany();
+  await prisma.aiMemory.deleteMany();
+  await prisma.databaseView.deleteMany();
+  await prisma.databaseRow.deleteMany();
+  await prisma.databaseField.deleteMany();
+  await prisma.database.deleteMany();
+  await prisma.block.deleteMany();
+  await prisma.page.deleteMany();
+  await prisma.appPreference.deleteMany();
+  await prisma.externalCalendarEventLink.deleteMany();
+  await prisma.externalCalendarAccount.deleteMany();
   await prisma.noteTag.deleteMany();
   await prisma.inboxItem.deleteMany();
   await prisma.task.deleteMany();
@@ -55,7 +68,7 @@ async function main() {
   }
 
   console.log(
-    `Seeded MyPlan SQLite data: ${seed.projects.length} projects, ${seed.tasks.length} tasks, ${seed.calendarEvents.length} events, ${seed.notes.length} notes`
+    `Seeded Nodiary SQLite data: ${seed.projects.length} projects, ${seed.tasks.length} tasks, ${seed.calendarEvents.length} events, ${seed.notes.length} notes`
   );
 }
 

@@ -1,0 +1,32 @@
+[
+  {
+    "name": "desktop-home-capture-command",
+    "h1": "오늘의 계획",
+    "bodyOverflow": 0,
+    "calendarCells": 35,
+    "selectedDate": "2026-06-16 선택됨",
+    "captureSaved": true,
+    "commandPalette": true
+  },
+  {
+    "name": "slash-keyboard",
+    "slashHeading": true
+  },
+  {
+    "name": "ai-fallback-notice",
+    "aiNotice": true
+  },
+  {
+    "name": "tablet-layout",
+    "bodyOverflow": 0,
+    "mainScrollable": true,
+    "calendarCells": 35
+  },
+  {
+    "name": "mobile-sidebar",
+    "mobileCalendarCells": 70,
+    "settingsVisible": true,
+    "closeVisible": true,
+    "sidebarClosed": true
+  }
+]

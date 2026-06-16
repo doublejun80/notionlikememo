@@ -1,0 +1,83 @@
+[
+  {
+    "name": "desktop-home",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "logs": [],
+    "result": {
+      "title": "Nodiary",
+      "h1": "오늘의 계획",
+      "calendarCells": 35,
+      "topButtons": [
+        "사이드바 열기",
+        "댓글",
+        "공유",
+        "AI 패널 닫기",
+        "설정 열기",
+        "더보기"
+      ],
+      "aiVisible": true
+    }
+  },
+  {
+    "name": "desktop-page-slash-db",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "logs": [],
+    "result": {
+      "h1": "고쳐야 할 50개",
+      "menuItems": [
+        "텍스트",
+        "제목 2",
+        "할 일 목록",
+        "콜아웃",
+        "데이터베이스 추가",
+        "AI에게 이 블록 편집 요청"
+      ],
+      "board": true
+    }
+  },
+  {
+    "name": "tablet-ai-settings",
+    "viewport": {
+      "width": 1024,
+      "height": 768
+    },
+    "logs": [],
+    "result": {
+      "before": false,
+      "afterOpen": true,
+      "afterClose": false,
+      "dialog": true
+    }
+  },
+  {
+    "name": "mobile-sidebar-settings",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "logs": [],
+    "result": {
+      "docH1": "오늘의 계획",
+      "calendarCells": 35,
+      "settingsVisible": false
+    }
+  },
+  {
+    "name": "mobile-ai-slash",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "logs": [],
+    "result": {
+      "aiVisible": true,
+      "menuCount": 6
+    }
+  }
+]

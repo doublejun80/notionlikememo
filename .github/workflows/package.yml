@@ -31,6 +31,14 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Prisma generate
+        run: npm run db:generate
+
+      - name: Prisma validate
+        run: npx prisma validate
+        env:
+          DATABASE_URL: file:./prisma/ci.db
+
       - name: Test
         run: npm test
 
