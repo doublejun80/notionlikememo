@@ -3,20 +3,27 @@ import { describe, expect, it } from "vitest";
 import {
   addDatabaseRow,
   approveAiAction,
+  changeCalendarMonth,
   createAiRunFromOperatorPlan,
   createAiRun,
   defaultNodiaryState,
+  getDatabaseRowsForView,
   insertBlockFromSlash,
   moveBlock,
+  moveBlockByKeyboard,
   moveCalendarEvent,
   moveDatabaseRow,
   movePageNode,
+  movePageNodeByKeyboard,
   rejectAiAction,
   requestCalendarEventMove,
   selectCalendarDate,
   selectPage,
   switchDatabaseView,
   undoLastAiAction,
+  updateDatabaseField,
+  updateDatabaseFilter,
+  updateDatabaseSort,
   updateBlockText,
   updatePreference
 } from "./nodiary-model";
@@ -100,6 +107,37 @@ describe("nodiary model", () => {
     });
   });
 
+  it("filters, sorts, and edits database field schema without losing rows", () => {
+    const state = insertBlockFromSlash(defaultNodiaryState(), "memo", "database");
+    const filtered = updateDatabaseFilter(state, "project-db", {
+      status: "doing",
+      query: "문서"
+    });
+    const sorted = updateDatabaseSort(filtered, "project-db", {
+      fieldId: "date",
+      direction: "desc"
+    });
+    const renamed = updateDatabaseField(sorted, "project-db", "title", {
+      name: "할 일"
+    });
+    const database = renamed.activePage.blocks.find((block) => block.id === "project-db")
+      ?.database;
+
+    expect(database?.fields.find((field) => field.id === "title")?.name).toBe("할 일");
+    expect(database?.rows).toHaveLength(4);
+    expect(database?.filter).toEqual({
+      status: "doing",
+      query: "문서"
+    });
+    expect(database?.sort).toEqual({
+      fieldId: "date",
+      direction: "desc"
+    });
+    expect(database ? getDatabaseRowsForView(database).map((row) => row.id) : []).toEqual([
+      "row-1"
+    ]);
+  });
+
   it("selects sidebar calendar dates and exposes the selected schedule", () => {
     const state = defaultNodiaryState();
     const selected = selectCalendarDate(state, "2026-06-18");
@@ -110,6 +148,22 @@ describe("nodiary model", () => {
         ?.isSelected
     ).toBe(true);
     expect(selected.sidebarCalendar.schedule[0]?.title).toBe("AI operator 점검");
+  });
+
+  it("navigates sidebar calendar months while keeping full month grids", () => {
+    const state = defaultNodiaryState();
+    const nextMonth = changeCalendarMonth(state, "next");
+    const previousMonth = changeCalendarMonth(nextMonth, "previous");
+
+    expect(nextMonth.sidebarCalendar.monthLabel).toBe("2026년 7월");
+    expect(nextMonth.sidebarCalendar.selectedDate).toBe("2026-07-01");
+    expect(nextMonth.sidebarCalendar.days).toHaveLength(35);
+    expect(nextMonth.sidebarCalendar.days[0]).toMatchObject({
+      isoDate: "2026-06-29",
+      label: "29"
+    });
+    expect(previousMonth.sidebarCalendar.monthLabel).toBe("2026년 6월");
+    expect(previousMonth.sidebarCalendar.selectedDate).toBe("2026-06-01");
   });
 
   it("creates approval-gated AI actions and keeps undo payloads", () => {
@@ -140,6 +194,88 @@ describe("nodiary model", () => {
     expect(undone.activePage.blocks.some((block) => block.id === "ai-plan")).toBe(
       false
     );
+  });
+
+  it("parses local AI fallback calendar move commands into approval proposals", () => {
+    const withRun = createAiRun(
+      defaultNodiaryState(),
+      "디자인 리뷰 일정을 2026-06-18 16:30로 옮겨줘."
+    );
+    const action = withRun.ai.runs[0]?.actions[0];
+
+    expect(withRun.sidebarCalendar.selectedDate).toBe("2026-06-16");
+    expect(action).toMatchObject({
+      toolName: "updateCalendarEvent",
+      approvalStatus: "pending",
+      riskLevel: "high",
+      applyPayload: {
+        operation: {
+          toolName: "updateCalendarEvent",
+          argsJson: {
+            eventId: "schedule-2",
+            date: "2026-06-18",
+            time: "16:30"
+          }
+        }
+      }
+    });
+
+    const approved = approveAiAction(withRun, action.id);
+
+    expect(approved.sidebarCalendar.selectedDate).toBe("2026-06-18");
+    expect(approved.sidebarCalendar.schedule[0]).toMatchObject({
+      id: "schedule-2",
+      time: "16:30"
+    });
+  });
+
+  it("parses Korean calendar move phrases into approval proposals", () => {
+    const withRun = createAiRun(
+      defaultNodiaryState(),
+      "디자인 리뷰를 6월 18일 오후 4시 30분으로 옮겨줘."
+    );
+    const action = withRun.ai.runs[0]?.actions[0];
+
+    expect(action).toMatchObject({
+      toolName: "updateCalendarEvent",
+      applyPayload: {
+        operation: {
+          argsJson: {
+            eventId: "schedule-2",
+            date: "2026-06-18",
+            time: "16:30"
+          }
+        }
+      }
+    });
+  });
+
+  it("parses local AI calendar commands even when another month is visible", () => {
+    const julyState = changeCalendarMonth(defaultNodiaryState(), "next");
+    const withRun = createAiRun(
+      julyState,
+      "디자인 리뷰 일정을 2026-06-18 16:30로 옮겨줘."
+    );
+    const action = withRun.ai.runs[0]?.actions[0];
+
+    expect(action).toMatchObject({
+      toolName: "updateCalendarEvent",
+      applyPayload: {
+        operation: {
+          argsJson: {
+            eventId: "schedule-2"
+          }
+        }
+      }
+    });
+
+    const approved = approveAiAction(withRun, action.id);
+
+    expect(approved.sidebarCalendar.selectedDate).toBe("2026-06-18");
+    expect(approved.sidebarCalendar.schedule[0]).toMatchObject({
+      id: "schedule-2",
+      time: "16:30"
+    });
   });
 
   it("rejects AI actions without mutating the document", () => {
@@ -183,6 +319,25 @@ describe("nodiary model", () => {
     );
   });
 
+  it("reorders document blocks through keyboard fallback commands", () => {
+    const state = defaultNodiaryState();
+    const movedUp = moveBlockByKeyboard(state, "memo-body", "up");
+    const movedDown = moveBlockByKeyboard(movedUp, "memo-body", "down");
+
+    expect(movedUp.activePage.blocks.map((block) => block.id)).toEqual([
+      "today-todos",
+      "todo-ui",
+      "todo-project",
+      "todo-openai",
+      "owner-note",
+      "memo-body",
+      "memo"
+    ]);
+    expect(movedDown.activePage.blocks.map((block) => block.id).at(-1)).toBe(
+      "memo-body"
+    );
+  });
+
   it("moves page tree nodes under a new parent", () => {
     const state = defaultNodiaryState();
     const moved = movePageNode(state, "fix-list", "today", 1);
@@ -195,6 +350,17 @@ describe("nodiary model", () => {
       "memo-ideas"
     ]);
     expect(planning?.children?.some((node) => node.id === "fix-list")).toBe(false);
+  });
+
+  it("reorders page tree siblings through keyboard fallback commands", () => {
+    const state = defaultNodiaryState();
+    const movedUp = movePageNodeByKeyboard(state, "fix-list", "up");
+    const planning = movedUp.pageTree.find((node) => node.id === "planning");
+
+    expect(planning?.children?.map((node) => node.id)).toEqual([
+      "fix-list",
+      "notion-standard"
+    ]);
   });
 
   it("moves database rows across board columns and calendar dates", () => {

@@ -1,5 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import React from "react";
+import React, { act } from "react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import userEvent from "@testing-library/user-event";
 
 import { defaultNodiaryState } from "@/features/nodiary/nodiary-model";
@@ -119,12 +121,108 @@ describe("HomePage", () => {
     });
   });
 
+  it("keeps the initial AI panel closed on narrow screens after API hydrate", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({
+        matches: false,
+        media: "(min-width: 1280px)",
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn()
+      }))
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input, init) => {
+        if (String(input) === "/api/nodiary/workspace" && !init) {
+          return {
+            ok: true,
+            json: async () => ({ state: defaultNodiaryState() })
+          };
+        }
+
+        return {
+          ok: true,
+          json: async () => ({ ok: true })
+        };
+      })
+    );
+
+    render(<HomePage />);
+
+    expect(screen.queryByLabelText("AI 명령 입력")).not.toBeInTheDocument();
+
+    expect(
+      await screen.findByRole("heading", { name: "오늘의 계획" })
+    ).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText("AI 명령 입력")).not.toBeInTheDocument();
+    });
+  });
+
+  it("does not read stored workspace state during the first hydrated render", async () => {
+    const storedState = defaultNodiaryState();
+    const storedTitle = "저장된 로컬 문서";
+    const realWindow = window;
+
+    window.localStorage.setItem(
+      "nodiary.workspace.v2",
+      JSON.stringify({
+        ...storedState,
+        activePage: {
+          ...storedState.activePage,
+          title: storedTitle
+        },
+        pages: {
+          ...storedState.pages,
+          [storedState.activePage.id]: {
+            ...storedState.activePage,
+            title: storedTitle
+          }
+        }
+      })
+    );
+
+    vi.stubGlobal("window", undefined);
+    const html = renderToString(<HomePage />);
+    vi.stubGlobal("window", realWindow);
+    document.body.innerHTML = `<div id="hydrate-root">${html}</div>`;
+
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const container = document.getElementById("hydrate-root");
+
+    expect(container).not.toBeNull();
+
+    let root: ReturnType<typeof hydrateRoot> | undefined;
+
+    await act(async () => {
+      root = hydrateRoot(container as HTMLElement, <HomePage />);
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+    });
+
+    const errorOutput = consoleError.mock.calls
+      .map((call) => call.map(String).join(" "))
+      .join("\n");
+
+    root?.unmount();
+    consoleError.mockRestore();
+
+    expect(errorOutput).not.toContain("A tree hydrated");
+  });
+
   it("lets the AI operator toggle live context scopes before sending", async () => {
     const user = userEvent.setup();
 
     render(<HomePage />);
 
-    const selectedBlockScope = screen.getByRole("button", { name: "선택 블록 컨텍스트 포함" });
+    const selectedBlockScope = await screen.findByRole("button", {
+      name: "선택 블록 컨텍스트 포함"
+    });
 
     expect(selectedBlockScope).toHaveAttribute("aria-pressed", "true");
 
@@ -153,6 +251,59 @@ describe("HomePage", () => {
     await user.type(titleInput, "하네스 수정 확인");
 
     expect(titleInput).toHaveValue("하네스 수정 확인");
+  });
+
+  it("filters, sorts, and edits database field schema from the database block", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    await user.click(screen.getByLabelText("빈 블록 입력"));
+    await user.keyboard("/");
+    await user.click(screen.getByRole("menuitem", { name: "데이터베이스 추가" }));
+
+    await user.selectOptions(screen.getByLabelText("DB 필터 상태"), "doing");
+
+    expect(screen.getByText("문서-first 첫 화면 구현")).toBeInTheDocument();
+    expect(screen.queryByText("AI 승인 큐와 undo log 연결")).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("DB 필터 상태"), "all");
+    await user.selectOptions(screen.getByLabelText("DB 정렬 필드"), "date");
+    await user.selectOptions(screen.getByLabelText("DB 정렬 방향"), "desc");
+
+    const table = screen.getByRole("table", { name: "고쳐야 할 50개 리스트 테이블" });
+    const rows = within(table).getAllByRole("row");
+
+    expect(rows[1]).toHaveTextContent("패키징/CI 체크리스트");
+
+    await user.click(screen.getByRole("button", { name: "필드 편집" }));
+    await user.clear(screen.getByLabelText("필드 이름: 작업"));
+    await user.type(screen.getByLabelText("필드 이름: 작업"), "할 일");
+
+    expect(screen.getByRole("columnheader", { name: "할 일" })).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("필드 유형: 담당"), "text");
+    expect(screen.getByLabelText("필드 유형: 담당")).toHaveValue("text");
+  });
+
+  it("navigates the sidebar month calendar without clipping the grid", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    await user.click(screen.getByRole("button", { name: "다음 달" }));
+
+    const july = screen.getByRole("grid", { name: "2026년 7월" });
+
+    expect(within(july).getAllByRole("button")).toHaveLength(35);
+    expect(within(july).getByRole("button", { name: "2026-07-01 선택됨" }));
+
+    await user.click(screen.getByRole("button", { name: "이전 달" }));
+
+    const june = screen.getByRole("grid", { name: "2026년 6월" });
+
+    expect(within(june).getAllByRole("button")).toHaveLength(35);
+    expect(within(june).getByRole("button", { name: "2026-06-01 선택됨" }));
   });
 
   it("uses the AI operator panel for approval-gated changes and undo", async () => {
@@ -191,7 +342,7 @@ describe("HomePage", () => {
     render(<HomePage />);
 
     await user.type(
-      screen.getByLabelText("AI 명령 입력"),
+      await screen.findByLabelText("AI 명령 입력"),
       "이 페이지를 실행 계획으로 정리해줘."
     );
     await user.click(screen.getByRole("button", { name: "AI에게 보내기" }));
@@ -230,7 +381,7 @@ describe("HomePage", () => {
     render(<HomePage />);
 
     await user.type(
-      screen.getByLabelText("AI 명령 입력"),
+      await screen.findByLabelText("AI 명령 입력"),
       "이 페이지를 실행 계획으로 정리해줘."
     );
     await user.click(screen.getByRole("button", { name: "AI에게 보내기" }));
@@ -239,6 +390,36 @@ describe("HomePage", () => {
       await screen.findByText("OpenAI 연결에 실패해 로컬 초안으로 승인 큐를 만들었습니다.")
     ).toBeInTheDocument();
     expect(await screen.findByText("+ AI 실행 계획 callout")).toBeInTheDocument();
+  });
+
+  it("turns local AI calendar move fallback into an approval proposal", async () => {
+    const user = userEvent.setup();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        json: async () => ({ error: "missing_openai_key" })
+      }))
+    );
+
+    render(<HomePage />);
+
+    await user.type(
+      await screen.findByLabelText("AI 명령 입력"),
+      "디자인 리뷰 일정을 2026-06-18 16:30로 옮겨줘."
+    );
+    await user.click(screen.getByRole("button", { name: "AI에게 보내기" }));
+
+    expect(await screen.findByText("일정 이동 제안")).toBeInTheDocument();
+    expect(
+      await screen.findByText(/디자인 리뷰 일정을 2026-06-18 16:30/)
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "승인" }));
+
+    expect(screen.getByText("16:30")).toBeInTheDocument();
+    expect(screen.getByText("높은 위험")).toBeInTheDocument();
   });
 
   it("saves quick capture items visibly in the sidebar inbox trail", async () => {
@@ -312,6 +493,58 @@ describe("HomePage", () => {
     expect(screen.getByText("높은 위험")).toBeInTheDocument();
   });
 
+  it("offers keyboard fallbacks for block drag and database row movement", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    const blockHandle = screen.getByLabelText("블록 드래그: 메모 본문");
+
+    blockHandle.focus();
+    await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
+
+    expect(screen.getAllByTestId("document-block")[5]).toHaveTextContent(
+      "Notion-like의 첫인상"
+    );
+
+    const pageHandle = screen.getByLabelText("페이지 드래그: 고쳐야 할 50개");
+
+    pageHandle.focus();
+    await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
+
+    const planningTree = screen.getByLabelText("페이지 드롭 위치: 기획 노트");
+    const planningText = planningTree.textContent ?? "";
+
+    expect(planningText.indexOf("고쳐야 할 50개")).toBeLessThan(
+      planningText.indexOf("NOTION-LIKE 기준")
+    );
+
+    await user.click(screen.getByLabelText("빈 블록 입력"));
+    await user.keyboard("/");
+    await user.click(screen.getByRole("menuitem", { name: "데이터베이스 추가" }));
+    await user.click(screen.getAllByRole("tab", { name: "보드" }).at(-1)!);
+
+    const boardCard = screen.getByLabelText("DB 행 드래그: 캘린더 충돌 처리 정책 정리");
+
+    boardCard.focus();
+    await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
+
+    expect(screen.getByLabelText("DB 상태 드롭: 진행")).toHaveTextContent(
+      "캘린더 충돌 처리 정책 정리"
+    );
+
+    await user.click(screen.getAllByRole("tab", { name: "캘린더" }).at(-1)!);
+
+    const calendarCard = screen.getByLabelText("DB 행 드래그: 패키징/CI 체크리스트");
+
+    calendarCard.focus();
+    await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+
+    expect(screen.getByRole("gridcell", { name: "2026-06-19" })).toHaveTextContent(
+      "패키징/CI 체크리스트"
+    );
+  });
+
   it("opens settings and updates personalization controls", async () => {
     const user = userEvent.setup();
 
@@ -325,6 +558,40 @@ describe("HomePage", () => {
 
     expect(screen.getByText("density: compact")).toBeInTheDocument();
     expect(screen.getByText("right panel: closed")).toBeInTheDocument();
+  });
+
+  it("traps settings modal focus, restores focus, and applies dark theme tokens", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    const settingsButton = screen.getAllByRole("button", { name: "설정 열기" })[0];
+
+    await user.click(settingsButton);
+
+    const dialog = screen.getByRole("dialog", { name: "개인화 설정" });
+    const closeButton = screen.getByRole("button", { name: "설정 닫기" });
+
+    expect(closeButton).toHaveFocus();
+
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+
+    await user.click(screen.getByRole("button", { name: "dark" }));
+
+    const workspace = screen.getByTestId("nodiary-workspace");
+
+    expect(workspace).toHaveAttribute("data-theme", "dark");
+    expect(workspace.style.getPropertyValue("--nodiary-canvas")).toBe("#211f1c");
+    expect(workspace.style.getPropertyValue("--nodiary-text-strong")).toBe("#f7f1e8");
+    expect(workspace.style.getPropertyValue("--nodiary-hover")).toBe("#34302a");
+    expect(workspace.style.getPropertyValue("--nodiary-selected")).toBe("#3a352e");
+
+    await user.click(closeButton);
+
+    await waitFor(() => {
+      expect(settingsButton).toHaveFocus();
+    });
   });
 });
 

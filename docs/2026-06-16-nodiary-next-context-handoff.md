@@ -1,0 +1,141 @@
+# Nodiary Next Context Handoff
+
+작성일: 2026-06-16
+
+## 현재 상태
+
+- repo: `/Volumes/mac_dock/github/notionlikememo`
+- branch: `main`
+- latest pushed commit: `c18f47a Fix Nodiary workspace remaining UX issues`
+- 이전 주요 commit: `958124d Build Nodiary workspace UX harness fixes`
+- `.env.local`은 ignored 상태이며 출력/커밋하지 않았음.
+- product direction: Nodiary, Notion Core Clone-lite, Electron 유지.
+- first screen rule: 프로젝트 대시보드가 아니라 `오늘의 계획` 문서 편집 화면.
+
+## 이번 추가 패스에서 고친 것
+
+- Workspace API validation을 `pageTree`, 전체 `pages`, nested database field/filter/sort/row schema까지 확장.
+- DB block에 filter/sort controls와 field name/type schema edit UI 추가.
+- sidebar calendar 이전/다음 달 navigation 추가.
+- AI local fallback이 한국어 calendar move 명령을 `updateCalendarEvent` approval proposal로 파싱.
+- block drag, page tree drag, DB board/card, DB calendar row 이동에 keyboard fallback 추가.
+- settings modal focus trap/restore 확인 및 hydration mismatch regression test 추가.
+- 전체 neutral theme/dark mode token을 sidebar, editor, DB, AI, settings 주요 surface에 확대 적용.
+- Google/Apple Calendar 실제 연결 전 단계로 mocked `previewCalendarSync` adapter와 tests 추가.
+- SSR hydration mismatch 방지를 위해 client 첫 render에서 localStorage workspace를 읽지 않도록 변경.
+
+## 이번에 고친 것
+
+- `/api/nodiary/workspace` GET/PUT로 workspace hydrate/save 연결.
+- localStorage는 API 실패/오프라인 fallback으로 유지.
+- `DATABASE_URL` 없는 dev 환경에서 workspace API가 Prisma 500/log spam을 내지 않고 default fallback 응답.
+- DB block에 `새 행` 버튼 추가.
+- DB table row title/status/owner/date 인라인 편집 추가.
+- 모바일 DB table은 카드형 편집 UI로 전환.
+- DB calendar view를 단순 리스트에서 7열 월간 grid로 변경.
+- DB row를 calendar date cell에 drop하면 row date가 변경됨.
+- AI context chips를 정적 span에서 `aria-pressed` 토글 버튼으로 변경.
+- AI request payload에 current page, selected block, calendar, memory scope 반영.
+- theme/accent 설정을 CSS variable로 내려 주요 UI(selected date, checkbox, AI button, settings active state 등)에 적용.
+- AI operator `createDatabaseRow` proposal을 실제 DB row 생성 모델 함수로 연결.
+- UX50 final report와 architecture 문서를 최신 상태로 갱신.
+- Playwright Chromium + Playwright Electron 시각 QA 스크린샷 추가.
+
+## 수정/추가된 핵심 파일
+
+- `src/features/nodiary/nodiary-workspace.tsx`
+  - API hydrate/save, AI scope toggle, DB add/edit/filter/sort/schema edit, DB calendar grid/month nav/keyboard controls, dark token 적용.
+- `src/features/nodiary/nodiary-model.ts`
+  - `addDatabaseRow` 추가.
+  - `createDatabaseRow` AI operation, Korean calendar move fallback, page tree keyboard move 처리 추가.
+- `src/app/api/nodiary/workspace/route.ts`
+  - persistence fallback 처리.
+  - DB URL 없는 환경에서 default workspace 반환.
+  - `pageTree`, 전체 `pages`, database schema/filter/sort validation 강화.
+- `src/app/api/nodiary/workspace/route.test.ts`
+  - fallback GET/PUT와 전체 state validation 테스트 추가.
+- `src/app/page.test.tsx`
+  - API hydrate/save, AI scope toggle, DB add/edit/filter/sort/schema edit, month nav, keyboard fallback, modal focus, hydration regression 테스트 추가.
+- `src/features/nodiary/nodiary-model.test.ts`
+  - DB row add, calendar move fallback, page tree keyboard move 테스트 추가.
+- `src/server/calendar/calendar-sync-adapter.ts`
+  - Google/Apple mocked sync preview adapter 추가.
+- `src/server/calendar/calendar-sync-adapter.test.ts`
+  - external newer proposal와 provider blocked preview 테스트 추가.
+- `docs/2026-06-16-nodiary-ux50-final-report.md`
+  - 남은 문제 처리 결과와 QA 증거 갱신.
+- `docs/2026-06-16-nodiary-harness-review-and-architecture.md`
+  - 최신 후속 수정 요약 추가.
+
+## 검증 완료
+
+- `npm test`: 13 files, 74 tests passed.
+- `npm run typecheck`: passed.
+- `npm run lint`: passed.
+- `npm run build`: passed.
+- `CSC_IDENTITY_AUTO_DISCOVERY=false npm run electron:pack`: passed.
+- `npm audit --audit-level=moderate`: 0 vulnerabilities.
+- Playwright Chromium QA:
+  - home title visible.
+  - DB calendar grid visible.
+  - edited DB row visible in calendar.
+  - AI selected-block scope toggle works.
+  - mobile menu visible.
+- Playwright Electron QA:
+  - Electron shell opens Nodiary.
+  - `오늘의 계획` title visible.
+  - AI input panel visible.
+  - project DB is not on first screen.
+  - no React hydration mismatch console error.
+  - sidebar calendar cells: 35.
+
+## QA 증거 파일
+
+- Previous committed QA artifacts:
+  - `docs/qa-artifacts/ux50/2026-06-16-after-fixes-home.png`
+  - `docs/qa-artifacts/ux50/2026-06-16-after-fixes-mobile.png`
+  - `docs/qa-artifacts/ux50/2026-06-16-after-fixes-db-calendar.png`
+  - `docs/qa-artifacts/ux50/2026-06-16-after-fixes-ai-settings.png`
+  - `docs/qa-artifacts/ux50/2026-06-16-after-fixes-electron.png`
+- Latest local QA screenshots/results were generated outside the repo at:
+  - `/tmp/nodiary-qa-2026-06-16/desktop-home.png`
+  - `/tmp/nodiary-qa-2026-06-16/desktop-db-calendar-keyboard.png`
+  - `/tmp/nodiary-qa-2026-06-16/desktop-ai-calendar-fallback.png`
+  - `/tmp/nodiary-qa-2026-06-16/desktop-dark-settings.png`
+  - `/tmp/nodiary-qa-2026-06-16/tablet-1024.png`
+  - `/tmp/nodiary-qa-2026-06-16/mobile-sidebar-calendar.png`
+  - `/tmp/nodiary-qa-2026-06-16/electron-home.png`
+  - `/tmp/nodiary-qa-2026-06-16/qa-results.json`
+  - `/tmp/nodiary-qa-2026-06-16/electron-results.json`
+
+## 아직 남은 이슈
+
+- Slash menu 검색/필터 미구현.
+- AI drawer open 시 input auto-focus/focus trap/restore는 별도 drawer a11y 패스로 남음.
+- board view 좁은 폭 UX 개선 남음.
+- 1024/1023 sidebar breakpoint 전환 급격함 남음.
+- Calendar data는 fixture 기반이며 real provider-backed source는 남음.
+- Google Calendar + Apple Calendar 실제 auth/write/conflict resolver UI는 남음. Mocked preview adapter/test만 있음.
+
+## 다음 작업 추천 순서
+
+1. Slash menu 검색/필터 추가.
+2. AI drawer focus management/autofocus/focus restore를 별도 패스로 정리.
+3. 좁은 board view와 1024/1023 sidebar breakpoint UX 개선.
+4. Calendar provider-backed source abstraction을 UI/state에 연결.
+5. Google/Apple Calendar real auth/write/conflict resolver는 mocked adapter 위에 단계적으로 구현.
+
+## 다음 컨텍스트 시작 시 주의
+
+- 먼저 다음 파일을 읽을 것:
+  - `AGENTS.md`
+  - `docs/superpowers/specs/2026-06-15-nodiary-development-handoff.md`
+  - `docs/superpowers/specs/2026-06-15-nodiary-harness-detail-design.md`
+  - `docs/superpowers/specs/2026-06-15-notion-ai-operator-redesign.md`
+  - `docs/2026-06-16-nodiary-ux50-final-report.md`
+  - `docs/2026-06-16-nodiary-next-context-handoff.md`
+- `.env.local` 출력/커밋 금지.
+- 첫 화면을 프로젝트 DB로 바꾸지 말 것.
+- Electron 유지, Tauri 전환 금지.
+- icons/handles는 lucide-react 기반 유지.
+- 화면 QA 없이 완료 주장 금지.

@@ -21,6 +21,24 @@ export type ApprovalStatus = "pending" | "approved" | "rejected" | "undone";
 
 export type RiskLevel = "low" | "medium" | "high";
 
+export type DatabaseFieldType = "text" | "status" | "date" | "person";
+
+export type DatabaseField = {
+  id: string;
+  name: string;
+  type: DatabaseFieldType;
+};
+
+export type DatabaseFilter = {
+  status: DatabaseRow["status"] | "all";
+  query: string;
+};
+
+export type DatabaseSort = {
+  fieldId: keyof Pick<DatabaseRow, "title" | "status" | "owner" | "date">;
+  direction: "asc" | "desc";
+};
+
 export type NodiaryBlock = {
   id: string;
   type: BlockType;
@@ -42,11 +60,9 @@ export type DatabaseBlock = {
   id: string;
   name: string;
   activeView: DatabaseViewType;
-  fields: Array<{
-    id: string;
-    name: string;
-    type: "text" | "status" | "date" | "person";
-  }>;
+  fields: DatabaseField[];
+  filter: DatabaseFilter;
+  sort: DatabaseSort;
   rows: DatabaseRow[];
 };
 
@@ -86,6 +102,7 @@ export type CalendarEvent = {
 };
 
 export type SidebarCalendar = {
+  visibleMonth: string;
   monthLabel: string;
   selectedDate: string;
   days: CalendarDay[];
@@ -181,6 +198,14 @@ const projectDatabase: DatabaseBlock = {
     { id: "owner", name: "담당", type: "person" },
     { id: "date", name: "날짜", type: "date" }
   ],
+  filter: {
+    status: "all",
+    query: ""
+  },
+  sort: {
+    fieldId: "title",
+    direction: "asc"
+  },
   rows: [
     {
       id: "row-1",
@@ -248,7 +273,7 @@ export function defaultNodiaryState(): NodiaryState {
       [activePage.id]: activePage
     },
     activePage,
-    sidebarCalendar: buildJuneCalendar("2026-06-16"),
+    sidebarCalendar: buildSidebarCalendar("2026-06", "2026-06-16"),
     ai: {
       panelInput: "",
       runs: [],
@@ -487,12 +512,30 @@ export function selectCalendarDate(
 ): NodiaryState {
   return {
     ...state,
-    sidebarCalendar: {
-      ...state.sidebarCalendar,
-      selectedDate: isoDate,
-      days: buildCalendarDaysWithMoves(state.sidebarCalendar, isoDate),
-      schedule: getScheduleForCalendar(state.sidebarCalendar, isoDate)
-    }
+    sidebarCalendar: buildSidebarCalendar(
+      isoDate.slice(0, 7),
+      isoDate,
+      state.sidebarCalendar.movedEvents
+    )
+  };
+}
+
+export function changeCalendarMonth(
+  state: NodiaryState,
+  direction: "previous" | "next"
+): NodiaryState {
+  const visibleMonth =
+    state.sidebarCalendar.visibleMonth ?? state.sidebarCalendar.selectedDate.slice(0, 7);
+  const nextMonth = addMonthsToMonthKey(visibleMonth, direction === "next" ? 1 : -1);
+  const selectedDate = `${nextMonth}-01`;
+
+  return {
+    ...state,
+    sidebarCalendar: buildSidebarCalendar(
+      nextMonth,
+      selectedDate,
+      state.sidebarCalendar.movedEvents
+    )
   };
 }
 
@@ -587,6 +630,37 @@ export function moveBlock(
   });
 }
 
+export function moveBlockByKeyboard(
+  state: NodiaryState,
+  blockId: string,
+  direction: "up" | "down"
+): NodiaryState {
+  const currentIndex = state.activePage.blocks.findIndex(
+    (block) => block.id === blockId
+  );
+
+  if (currentIndex < 0) {
+    return state;
+  }
+
+  const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+
+  if (targetIndex < 0 || targetIndex >= state.activePage.blocks.length) {
+    return state;
+  }
+
+  const blocks = [...state.activePage.blocks];
+  const currentBlock = blocks[currentIndex];
+
+  blocks[currentIndex] = blocks[targetIndex];
+  blocks[targetIndex] = currentBlock;
+
+  return withActivePage(state, {
+    ...state.activePage,
+    blocks
+  });
+}
+
 export function movePageNode(
   state: NodiaryState,
   nodeId: string,
@@ -612,6 +686,23 @@ export function movePageNode(
   return {
     ...state,
     pageTree: insertedTree.nodes
+  };
+}
+
+export function movePageNodeByKeyboard(
+  state: NodiaryState,
+  nodeId: string,
+  direction: "up" | "down"
+): NodiaryState {
+  const result = movePageNodeWithinSiblings(state.pageTree, nodeId, direction);
+
+  if (!result.moved) {
+    return state;
+  }
+
+  return {
+    ...state,
+    pageTree: result.nodes
   };
 }
 
@@ -691,6 +782,81 @@ export function addDatabaseRow(
         }
       };
     })
+  });
+}
+
+export function updateDatabaseFilter(
+  state: NodiaryState,
+  databaseBlockId: string,
+  patch: Partial<DatabaseFilter>
+): NodiaryState {
+  return updateDatabaseBlock(state, databaseBlockId, (database) => ({
+    ...database,
+    filter: {
+      ...getDatabaseFilter(database),
+      ...patch
+    }
+  }));
+}
+
+export function updateDatabaseSort(
+  state: NodiaryState,
+  databaseBlockId: string,
+  sort: DatabaseSort
+): NodiaryState {
+  return updateDatabaseBlock(state, databaseBlockId, (database) => ({
+    ...database,
+    sort
+  }));
+}
+
+export function updateDatabaseField(
+  state: NodiaryState,
+  databaseBlockId: string,
+  fieldId: string,
+  patch: Partial<Pick<DatabaseField, "name" | "type">>
+): NodiaryState {
+  return updateDatabaseBlock(state, databaseBlockId, (database) => ({
+    ...database,
+    fields: database.fields.map((field) =>
+      field.id === fieldId
+        ? {
+            ...field,
+            ...(patch.name !== undefined
+              ? { name: patch.name }
+              : {}),
+            ...(patch.type !== undefined ? { type: patch.type } : {})
+          }
+        : field
+    )
+  }));
+}
+
+export function getDatabaseRowsForView(database: DatabaseBlock): DatabaseRow[] {
+  const filter = getDatabaseFilter(database);
+  const sort = getDatabaseSort(database);
+  const normalizedQuery = filter.query.trim().toLowerCase();
+  const filteredRows = database.rows.filter((row) => {
+    if (filter.status !== "all" && row.status !== filter.status) {
+      return false;
+    }
+
+    if (!normalizedQuery) {
+      return true;
+    }
+
+    return [row.title, row.owner, row.date, row.status]
+      .join(" ")
+      .toLowerCase()
+      .includes(normalizedQuery);
+  });
+
+  return [...filteredRows].sort((left, right) => {
+    const leftValue = getDatabaseSortValue(left, sort.fieldId);
+    const rightValue = getDatabaseSortValue(right, sort.fieldId);
+    const result = leftValue.localeCompare(rightValue, "ko");
+
+    return sort.direction === "asc" ? result : -result;
   });
 }
 
@@ -803,41 +969,28 @@ export function moveCalendarEvent(
     time: patch.time ?? event.time,
     conflictRisk
   };
+  const nextMovedEvents = {
+    ...movedEvents,
+    [eventId]: movedEvent
+  };
 
   return {
     ...state,
-    sidebarCalendar: {
-      ...state.sidebarCalendar,
-      movedEvents: {
-        ...movedEvents,
-        [eventId]: movedEvent
-      },
-      selectedDate: patch.date,
-      days: buildCalendarDaysWithMoves(
-        {
-          ...state.sidebarCalendar,
-          movedEvents: {
-            ...movedEvents,
-            [eventId]: movedEvent
-          }
-        },
-        patch.date
-      ),
-      schedule: getScheduleForCalendar(
-        {
-          ...state.sidebarCalendar,
-          movedEvents: {
-            ...movedEvents,
-            [eventId]: movedEvent
-          }
-        },
-        patch.date
-      )
-    }
+    sidebarCalendar: buildSidebarCalendar(
+      patch.date.slice(0, 7),
+      patch.date,
+      nextMovedEvents
+    )
   };
 }
 
 export function createAiRun(state: NodiaryState, command: string): NodiaryState {
+  const calendarMoveRun = createCalendarMoveRunFromCommand(state, command);
+
+  if (calendarMoveRun) {
+    return calendarMoveRun;
+  }
+
   const insertedBlocks: NodiaryBlock[] = [
     {
       id: "ai-plan",
@@ -871,6 +1024,77 @@ export function createAiRun(state: NodiaryState, command: string): NodiaryState 
     command,
     status: "awaiting_approval",
     modelRoute: command.length > 120 ? "large-context" : "planner",
+    actions: [action]
+  };
+
+  return {
+    ...state,
+    ai: {
+      ...state.ai,
+      panelInput: "",
+      runs: [run, ...state.ai.runs]
+    }
+  };
+}
+
+function createCalendarMoveRunFromCommand(
+  state: NodiaryState,
+  command: string
+): NodiaryState | undefined {
+  const targetDate = parseCalendarCommandDate(
+    command,
+    state.sidebarCalendar.selectedDate
+  );
+  const targetTime = parseCalendarCommandTime(command);
+  const event = findCalendarEventByCommand(state, command);
+
+  if (!targetDate || !event) {
+    return undefined;
+  }
+
+  const targetSchedule = getScheduleForCalendar(state.sidebarCalendar, targetDate)
+    .filter((candidate) => candidate.id !== event.id);
+  const riskLevel = getCalendarMoveRisk(event, targetSchedule);
+  const runIndex = state.ai.runs.length + 1;
+  const action: AiProposedAction = {
+    id: `local-calendar-action-${runIndex}`,
+    toolName: "updateCalendarEvent",
+    summary: `${event.title} 일정을 ${targetDate} ${targetTime ?? event.time}로 이동합니다.`,
+    diff: JSON.stringify(
+      {
+        before: {
+          date: event.date ?? state.sidebarCalendar.selectedDate,
+          time: event.time,
+          source: event.source
+        },
+        after: {
+          date: targetDate,
+          time: targetTime ?? event.time,
+          conflictRisk: riskLevel
+        }
+      },
+      null,
+      2
+    ),
+    riskLevel,
+    approvalStatus: "pending",
+    applyPayload: {
+      operation: {
+        toolName: "updateCalendarEvent",
+        argsJson: {
+          eventId: event.id,
+          date: targetDate,
+          time: targetTime
+        }
+      }
+    },
+    undoPayload: {}
+  };
+  const run: AiRun = {
+    id: `local-calendar-run-${runIndex}`,
+    command,
+    status: "awaiting_approval",
+    modelRoute: "planner",
     actions: [action]
   };
 
@@ -1089,6 +1313,9 @@ function createBlockFromSlash(
         database: {
           ...projectDatabase,
           id: databaseId,
+          fields: projectDatabase.fields.map((field) => ({ ...field })),
+          filter: { ...projectDatabase.filter },
+          sort: { ...projectDatabase.sort },
           rows: [...projectDatabase.rows]
         }
       };
@@ -1155,80 +1382,275 @@ function withActivePage(
   };
 }
 
-function buildJuneCalendar(selectedDate: string): SidebarCalendar {
-  const eventDates = new Set(["2026-06-05", "2026-06-10", "2026-06-12", "2026-06-16", "2026-06-18", "2026-06-23", "2026-06-26"]);
-  const days: CalendarDay[] = [];
+const TODAY_ISO_DATE = "2026-06-16";
 
-  for (let day = 1; day <= 30; day += 1) {
-    const isoDate = `2026-06-${String(day).padStart(2, "0")}`;
-    days.push({
-      id: isoDate,
-      label: String(day),
-      isoDate,
-      isToday: isoDate === "2026-06-16",
-      isSelected: isoDate === selectedDate,
-      hasEvent: eventDates.has(isoDate)
-    });
-  }
-
-  for (let day = 1; day <= 5; day += 1) {
-    const isoDate = `2026-07-${String(day).padStart(2, "0")}`;
-    days.push({
-      id: isoDate,
-      label: String(day),
-      isoDate,
-      isToday: false,
-      isSelected: false,
-      hasEvent: false
-    });
-  }
+function buildSidebarCalendar(
+  visibleMonth: string,
+  selectedDate: string,
+  movedEvents: Record<string, CalendarEvent> = {}
+): SidebarCalendar {
+  const days = buildCalendarDays(visibleMonth, selectedDate, movedEvents);
 
   return {
-    monthLabel: "2026년 6월",
+    visibleMonth,
+    monthLabel: formatMonthLabel(visibleMonth),
     selectedDate,
     days,
-    schedule: getScheduleForDate(selectedDate),
-    movedEvents: {}
+    schedule: getScheduleForCalendar(
+      {
+        visibleMonth,
+        monthLabel: formatMonthLabel(visibleMonth),
+        selectedDate,
+        days,
+        schedule: [],
+        movedEvents
+      },
+      selectedDate
+    ),
+    movedEvents
   };
 }
 
-function getScheduleForDate(isoDate: string): CalendarEvent[] {
-  const schedules: Record<string, CalendarEvent[]> = {
-    "2026-06-16": [
-      {
-        id: "schedule-1",
-        time: "10:00",
-        title: "제품 기획서 정리",
-        source: "nodiary"
-      },
-      {
-        id: "schedule-2",
-        time: "15:00",
-        title: "디자인 리뷰",
-        source: "google"
-      }
-    ],
-    "2026-06-18": [
-      {
-        id: "schedule-3",
-        time: "11:00",
-        title: "AI operator 점검",
-        source: "nodiary"
-      },
-      {
-        id: "schedule-4",
-        time: "16:00",
-        title: "캘린더 충돌 리뷰",
-        source: "apple"
-      }
-    ]
-  };
+function buildCalendarDays(
+  visibleMonth: string,
+  selectedDate: string,
+  movedEvents: Record<string, CalendarEvent>
+): CalendarDay[] {
+  const [year, month] = parseMonthKey(visibleMonth);
+  const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+  const mondayOffset = (firstWeekday + 6) % 7;
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const cellCount = Math.ceil((mondayOffset + daysInMonth) / 7) * 7;
+  const days: CalendarDay[] = [];
 
-  return (schedules[isoDate] ?? []).map((event) => ({
+  for (let cellIndex = 0; cellIndex < cellCount; cellIndex += 1) {
+    const date = new Date(Date.UTC(year, month - 1, 1 - mondayOffset + cellIndex));
+    const isoDate = formatIsoDate(date);
+    const calendar = {
+      visibleMonth,
+      monthLabel: formatMonthLabel(visibleMonth),
+      selectedDate,
+      days: [],
+      schedule: [],
+      movedEvents
+    } satisfies SidebarCalendar;
+
+    days.push({
+      id: isoDate,
+      label: String(date.getUTCDate()),
+      isoDate,
+      isToday: isoDate === TODAY_ISO_DATE,
+      isSelected: isoDate === selectedDate,
+      hasEvent: getScheduleForCalendar(calendar, isoDate).length > 0
+    });
+  }
+
+  return days;
+}
+
+function parseMonthKey(visibleMonth: string): [number, number] {
+  const [year, month] = visibleMonth.split("-").map(Number);
+
+  return [year, month];
+}
+
+function formatMonthLabel(visibleMonth: string) {
+  const [year, month] = parseMonthKey(visibleMonth);
+
+  return `${year}년 ${month}월`;
+}
+
+function formatIsoDate(date: Date) {
+  return [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, "0"),
+    String(date.getUTCDate()).padStart(2, "0")
+  ].join("-");
+}
+
+function addMonthsToMonthKey(visibleMonth: string, delta: number) {
+  const [year, month] = parseMonthKey(visibleMonth);
+  const date = new Date(Date.UTC(year, month - 1 + delta, 1));
+
+  return [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, "0")
+  ].join("-");
+}
+
+function addDaysToIsoDate(isoDate: string, delta: number) {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + delta));
+
+  return formatIsoDate(date);
+}
+
+function parseCalendarCommandDate(
+  command: string,
+  referenceDate: string
+): string | undefined {
+  const isoDate = command.match(/\b(20\d{2}-\d{2}-\d{2})\b/)?.[1];
+
+  if (isoDate) {
+    return isoDate;
+  }
+
+  if (command.includes("모레")) {
+    return addDaysToIsoDate(referenceDate, 2);
+  }
+
+  if (command.includes("내일")) {
+    return addDaysToIsoDate(referenceDate, 1);
+  }
+
+  if (command.includes("오늘")) {
+    return referenceDate;
+  }
+
+  const koreanDate = command.match(
+    /(?:(20\d{2})년\s*)?(\d{1,2})월\s*(\d{1,2})일/
+  );
+
+  if (koreanDate) {
+    const referenceYear = Number(referenceDate.slice(0, 4));
+    const year = Number(koreanDate[1] ?? referenceYear);
+    const month = Number(koreanDate[2]);
+    const day = Number(koreanDate[3]);
+
+    return formatCalendarCommandDate(year, month, day);
+  }
+
+  const dayOnly = command.match(/(?:^|[^\d])(\d{1,2})일/);
+
+  if (dayOnly) {
+    const [referenceYear, referenceMonth] = referenceDate.split("-").map(Number);
+
+    return formatCalendarCommandDate(
+      referenceYear,
+      referenceMonth,
+      Number(dayOnly[1])
+    );
+  }
+
+  const weekdayIndex = getKoreanWeekdayIndex(command);
+
+  if (weekdayIndex !== undefined) {
+    const reference = new Date(`${referenceDate}T00:00:00.000Z`);
+    const currentWeekday = reference.getUTCDay();
+    const daysUntilTarget = (weekdayIndex - currentWeekday + 7) % 7 || 7;
+
+    return addDaysToIsoDate(referenceDate, daysUntilTarget);
+  }
+
+  return undefined;
+}
+
+function parseCalendarCommandTime(command: string): string | undefined {
+  const clockTime = command.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+
+  if (clockTime) {
+    return `${clockTime[1].padStart(2, "0")}:${clockTime[2]}`;
+  }
+
+  const koreanTime = command.match(
+    /(오전|오후)?\s*(\d{1,2})시(?:\s*(\d{1,2})분)?/
+  );
+
+  if (!koreanTime) {
+    return undefined;
+  }
+
+  const meridiem = koreanTime[1];
+  let hour = Number(koreanTime[2]);
+  const minute = Number(koreanTime[3] ?? 0);
+
+  if (meridiem === "오후" && hour < 12) {
+    hour += 12;
+  }
+
+  if (meridiem === "오전" && hour === 12) {
+    hour = 0;
+  }
+
+  if (hour > 23 || minute > 59) {
+    return undefined;
+  }
+
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function formatCalendarCommandDate(year: number, month: number, day: number) {
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return undefined;
+  }
+
+  return formatIsoDate(date);
+}
+
+function getKoreanWeekdayIndex(command: string) {
+  const weekdays: Array<[string, number]> = [
+    ["일요일", 0],
+    ["월요일", 1],
+    ["화요일", 2],
+    ["수요일", 3],
+    ["목요일", 4],
+    ["금요일", 5],
+    ["토요일", 6],
+    ["일욜", 0],
+    ["월욜", 1],
+    ["화욜", 2],
+    ["수욜", 3],
+    ["목욜", 4],
+    ["금욜", 5],
+    ["토욜", 6]
+  ];
+
+  return weekdays.find(([label]) => command.includes(label))?.[1];
+}
+
+function getScheduleForDate(isoDate: string): CalendarEvent[] {
+  return (baseCalendarSchedules[isoDate] ?? []).map((event) => ({
     ...event,
     date: isoDate
   }));
 }
+
+const baseCalendarSchedules: Record<string, CalendarEvent[]> = {
+  "2026-06-16": [
+    {
+      id: "schedule-1",
+      time: "10:00",
+      title: "제품 기획서 정리",
+      source: "nodiary"
+    },
+    {
+      id: "schedule-2",
+      time: "15:00",
+      title: "디자인 리뷰",
+      source: "google"
+    }
+  ],
+  "2026-06-18": [
+    {
+      id: "schedule-3",
+      time: "11:00",
+      title: "AI operator 점검",
+      source: "nodiary"
+    },
+    {
+      id: "schedule-4",
+      time: "16:00",
+      title: "캘린더 충돌 리뷰",
+      source: "apple"
+    }
+  ]
+};
 
 function getScheduleForCalendar(
   calendar: SidebarCalendar,
@@ -1244,17 +1666,6 @@ function getScheduleForCalendar(
   );
 
   return [...movedForDate, ...baseEvents];
-}
-
-function buildCalendarDaysWithMoves(
-  calendar: SidebarCalendar,
-  selectedDate: string
-): CalendarDay[] {
-  return calendar.days.map((day) => ({
-    ...day,
-    isSelected: day.isoDate === selectedDate,
-    hasEvent: getScheduleForCalendar(calendar, day.isoDate).length > 0
-  }));
 }
 
 function createUniqueId(existingIds: Set<string>, prefix: string) {
@@ -1280,6 +1691,66 @@ function createDatabaseRowId(rows: DatabaseRow[]) {
   }
 
   return candidate;
+}
+
+function updateDatabaseBlock(
+  state: NodiaryState,
+  databaseBlockId: string,
+  update: (database: DatabaseBlock) => DatabaseBlock
+): NodiaryState {
+  return withActivePage(state, {
+    ...state.activePage,
+    blocks: state.activePage.blocks.map((block) => {
+      if (block.id !== databaseBlockId || !block.database) {
+        return block;
+      }
+
+      return {
+        ...block,
+        database: update(normalizeDatabaseBlock(block.database))
+      };
+    })
+  });
+}
+
+function normalizeDatabaseBlock(database: DatabaseBlock): DatabaseBlock {
+  return {
+    ...database,
+    filter: getDatabaseFilter(database),
+    sort: getDatabaseSort(database)
+  };
+}
+
+function getDatabaseFilter(database: DatabaseBlock): DatabaseFilter {
+  return database.filter ?? {
+    status: "all",
+    query: ""
+  };
+}
+
+function getDatabaseSort(database: DatabaseBlock): DatabaseSort {
+  return database.sort ?? {
+    fieldId: "title",
+    direction: "asc"
+  };
+}
+
+function getDatabaseSortValue(
+  row: DatabaseRow,
+  fieldId: DatabaseSort["fieldId"]
+) {
+  if (fieldId === "status") {
+    const statusOrder: Record<DatabaseRow["status"], string> = {
+      backlog: "1",
+      doing: "2",
+      review: "3",
+      done: "4"
+    };
+
+    return statusOrder[row.status];
+  }
+
+  return row[fieldId];
 }
 
 function insertDatabaseRowAtStatusIndex(
@@ -1396,6 +1867,68 @@ function insertPageNode(
   };
 }
 
+function movePageNodeWithinSiblings(
+  nodes: PageNode[],
+  nodeId: string,
+  direction: "up" | "down"
+): {
+  nodes: PageNode[];
+  moved: boolean;
+} {
+  const nodeIndex = nodes.findIndex((node) => node.id === nodeId);
+
+  if (nodeIndex >= 0) {
+    const targetIndex = direction === "up" ? nodeIndex - 1 : nodeIndex + 1;
+
+    if (targetIndex < 0 || targetIndex >= nodes.length) {
+      return {
+        nodes,
+        moved: false
+      };
+    }
+
+    const nextNodes = [...nodes];
+    const currentNode = nextNodes[nodeIndex];
+
+    nextNodes[nodeIndex] = nextNodes[targetIndex];
+    nextNodes[targetIndex] = currentNode;
+
+    return {
+      nodes: nextNodes,
+      moved: true
+    };
+  }
+
+  let moved = false;
+  const nextNodes = nodes.map((node) => {
+    if (!node.children || moved) {
+      return node;
+    }
+
+    const result = movePageNodeWithinSiblings(
+      node.children,
+      nodeId,
+      direction
+    );
+
+    if (!result.moved) {
+      return node;
+    }
+
+    moved = true;
+
+    return {
+      ...node,
+      children: result.nodes
+    };
+  });
+
+  return {
+    nodes: nextNodes,
+    moved
+  };
+}
+
 function togglePageTreeNode(nodes: PageNode[], nodeId: string): PageNode[] {
   return nodes.map((node) => ({
     ...node,
@@ -1479,7 +2012,45 @@ function findCalendarEvent(
     }
   }
 
-  return undefined;
+  return getKnownCalendarEvents().find((event) => event.id === eventId);
+}
+
+function findCalendarEventByCommand(
+  state: NodiaryState,
+  command: string
+): CalendarEvent | undefined {
+  const movedEvents = Object.values(state.sidebarCalendar.movedEvents ?? {});
+
+  return [
+    ...movedEvents,
+    ...getCalendarEventsInVisibleRange(state.sidebarCalendar),
+    ...getKnownCalendarEvents()
+  ].find((event) => command.includes(event.title));
+}
+
+function getKnownCalendarEvents(): CalendarEvent[] {
+  return Object.entries(baseCalendarSchedules).flatMap(([date, events]) =>
+    events.map((event) => ({
+      ...event,
+      date
+    }))
+  );
+}
+
+function getCalendarEventsInVisibleRange(calendar: SidebarCalendar): CalendarEvent[] {
+  const eventsById = new Map<string, CalendarEvent>();
+
+  for (const day of calendar.days) {
+    for (const event of getScheduleForCalendar(calendar, day.isoDate)) {
+      eventsById.set(event.id, event);
+    }
+  }
+
+  for (const event of calendar.schedule) {
+    eventsById.set(event.id, event);
+  }
+
+  return Array.from(eventsById.values());
 }
 
 function attachRuntimeUndoPayload(

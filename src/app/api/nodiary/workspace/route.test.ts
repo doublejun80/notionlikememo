@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { defaultNodiaryState } from "@/features/nodiary/nodiary-model";
+import {
+  defaultNodiaryState,
+  insertBlockFromSlash
+} from "@/features/nodiary/nodiary-model";
 
 import { GET, PUT } from "./route";
 import { loadNodiaryState, saveNodiaryState } from "@/server/nodiary/nodiary-repository";
@@ -75,6 +78,78 @@ describe("/api/nodiary/workspace", () => {
               id: "../bad",
               title: "x".repeat(500),
               blocks: [{ id: "bad", type: "script", text: "<script />" }]
+            }
+          }
+        })
+      })
+    );
+
+    expect(response.status).toBe(422);
+    expect(saveNodiaryState).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid pages outside activePage before repository save", async () => {
+    const state = defaultNodiaryState();
+
+    const response = await PUT(
+      new Request("http://localhost/api/nodiary/workspace", {
+        method: "PUT",
+        body: JSON.stringify({
+          state: {
+            ...state,
+            pages: {
+              ...state.pages,
+              unsafe: {
+                id: "../unsafe",
+                title: "",
+                properties: [],
+                blocks: [{ id: "bad", type: "script", text: "<script />" }]
+              }
+            }
+          }
+        })
+      })
+    );
+
+    expect(response.status).toBe(422);
+    expect(saveNodiaryState).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid database schema nested in saved pages", async () => {
+    const stateWithDatabase = insertBlockFromSlash(defaultNodiaryState(), "memo", "database");
+    const databasePage = {
+      ...stateWithDatabase.activePage,
+      id: "planning",
+      title: "기획 노트",
+      blocks: stateWithDatabase.activePage.blocks.map((block) =>
+        block.database
+          ? {
+              ...block,
+              database: {
+                ...block.database,
+                fields: [
+                  ...block.database.fields,
+                  {
+                    id: "bad-field",
+                    name: "나쁜 필드",
+                    type: "formula"
+                  }
+                ]
+              }
+            }
+          : block
+      )
+    };
+
+    const response = await PUT(
+      new Request("http://localhost/api/nodiary/workspace", {
+        method: "PUT",
+        body: JSON.stringify({
+          state: {
+            ...defaultNodiaryState(),
+            pages: {
+              ...defaultNodiaryState().pages,
+              [databasePage.id]: databasePage
             }
           }
         })

@@ -40,6 +40,17 @@
 - theme/accent 설정을 root CSS variable로 내려 selected date, checkbox, AI button, settings active state 등에 반영했다.
 - AI operator의 `createDatabaseRow` tool proposal이 실제 DB row 생성 모델 함수로 실행되게 했다.
 
+## 2026-06-16 추가 마감 패스
+
+- Workspace API validation을 activePage 중심에서 `pageTree`, 전체 `pages`, nested database field/filter/sort/row schema 검증으로 확장했다.
+- DB block에 상태/검색 filter, field sort, field name/type schema edit UI를 추가했다.
+- sidebar calendar month navigation을 추가하고 전체 월간 grid가 35 cells로 유지되는지 검증했다.
+- AI local fallback이 `디자인 리뷰를 6월 18일 오후 4시 30분으로 옮겨줘` 같은 한국어 calendar move 명령을 `updateCalendarEvent` 승인 proposal로 만든다.
+- modal focus trap/restore, block/page tree/DB board/DB calendar keyboard move fallback을 추가했다.
+- theme/dark mode neutral token을 주요 shell, editor, database, AI, settings surfaces에 확대 적용했다.
+- SSR hydration mismatch를 막기 위해 client 첫 render에서 localStorage workspace를 읽지 않고, API 실패 fallback은 mount 이후 적용하도록 바꿨다.
+- Google/Apple calendar sync는 실제 provider 연결 전 단계로 mocked `previewCalendarSync` adapter와 integration tests를 추가했다.
+
 ## UX50 리스트와 처리 상태
 
 | # | 출처 | 발견 내용 | 처리 |
@@ -59,14 +70,14 @@
 | 13 | U1/U2/U3/U4 | Quick Capture submit이 텍스트를 버리는 것처럼 보임 | 수정 |
 | 14 | U1/U3 | 선택한 빈 calendar day에 empty state 없음 | 수정 |
 | 15 | U1/U4 | AI API 실패가 성공처럼 조용히 local fallback | 수정 |
-| 16 | U4 | AI가 calendar move command를 local fallback에서 이해하지 못함 | 남음 |
+| 16 | U4 | AI가 calendar move command를 local fallback에서 이해하지 못함 | 수정 |
 | 17 | U1/U4 | approval card가 `updateBlock`, `high`, `pending` 등 내부 라벨 노출 | 수정 |
 | 18 | U4 | AI context chips가 토글처럼 보이지만 static | 수정 |
 | 19 | U4 | sidebar AI 글쓰기 row가 panel을 열지 않음 | 수정 |
 | 20 | U4 | AI drawer backdrop/Escape close 부족 | 수정 |
 | 21 | U4 | AI drawer focus가 input으로 가지 않음 | 부분 남음 |
 | 22 | U4 | settings 변경이 reload 후 reset | 부분 수정: localStorage 보존 |
-| 23 | U4 | theme/accent 선택이 실제 visual token에 충분히 적용되지 않음 | 부분 수정: root token과 주요 accent UI 적용 |
+| 23 | U4 | theme/accent 선택이 실제 visual token에 충분히 적용되지 않음 | 수정: dark/light neutral token 확대 |
 | 24 | U3 | 모바일 topbar hit target 32px | 수정 |
 | 25 | U3 | topbar 댓글/공유/더보기 inert | 부분 수정: 안내/command palette 연결 |
 | 26 | U3 | 모바일 sidebar에 명시적 close 없음 | 수정 |
@@ -83,21 +94,21 @@
 | 37 | U2 | command/search `Cmd+K` 없음 | 수정: command palette 추가 |
 | 38 | U2 | table 620px가 1024 content보다 큼 | 수정: table-fixed + 모바일 카드형 전환 |
 | 39 | U2 | board가 좁은 폭에서 4 columns로 답답 | 남음 |
-| 40 | U1 | calendar month가 June 2026 고정 | 남음 |
+| 40 | U1 | calendar month가 June 2026 고정 | 수정 |
 | 41 | 기획 | 오늘 날짜가 현재 날짜와 맞지 않음 | 수정: 2026-06-16 |
 | 42 | 개발 | localStorage persistence가 테스트를 오염시킴 | 수정: tests clear storage |
 | 43 | 개발 | `/settings`가 old MyPlan shell | 수정 |
 | 44 | 개발 | Electron dev Next server에 session token 미전달 | 수정 |
-| 45 | 개발 | Workspace API validation이 activePage 중심 | 남음 |
+| 45 | 개발 | Workspace API validation이 activePage 중심 | 수정 |
 | 46 | 개발 | 실제 Prisma-backed UI hydrate/save 미연결 | 수정 |
-| 47 | 개발 | modal focus trap/restore 미완성 | 남음 |
-| 48 | 개발 | drag-only 기능 keyboard fallback 부족 | 남음 |
-| 49 | 개발 | DB row inline edit/filter/sort 없음 | 부분 수정: row add/inline edit 완료, filter/sort 남음 |
-| 50 | 개발 | Google/Apple calendar real two-way sync adapter 없음 | 남음 |
+| 47 | 개발 | modal focus trap/restore 미완성 | 수정 |
+| 48 | 개발 | drag-only 기능 keyboard fallback 부족 | 수정: block/page/DB keyboard fallback 추가 |
+| 49 | 개발 | DB row inline edit/filter/sort 없음 | 수정 |
+| 50 | 개발 | Google/Apple calendar real two-way sync adapter 없음 | 부분 수정: mocked preview adapter/test 추가, 실제 provider auth/write는 남음 |
 
 ## 검증 결과
 
-- `npm test`: 12 files, 56 tests passed.
+- `npm test`: 13 files, 74 tests passed.
 - `npm run typecheck`: passed.
 - `npm run lint`: passed.
 - `npm run build`: passed.
@@ -139,12 +150,32 @@
 - follow-up AI selected-block scope toggled off: `aria-pressed=false`
 - follow-up Electron shell title/AI panel visible: `true`
 - follow-up Electron first-screen DB block: `false`
+- final Chromium QA:
+  - Browser plugin unavailable, regular Playwright Chromium used.
+  - desktop 1440 first-screen project DB block: `false`
+  - sidebar calendar June cells: `35`
+  - July month navigation cells: `35`
+  - DB field type edit value: `text`
+  - DB calendar keyboard move to 2026-06-19: `true`
+  - Korean AI fallback calendar proposal shown/approved: `true`
+  - settings initial focus: `설정 닫기`
+  - modal focus remains inside dialog after Shift+Tab: `true`
+  - dark tokens applied: `#211f1c`, `#f7f1e8`, `#34302a`
+  - desktop/tablet/mobile framework overlay: `false`
+  - Chromium console errors/warnings: `0`
+- final Electron QA:
+  - title: `Nodiary`
+  - `오늘의 계획` visible: `true`
+  - AI input visible: `true`
+  - first-screen project DB block: `false`
+  - sidebar calendar cells: `35`
+  - body overflow: `0`
+  - Electron console errors/warnings: `0`
 
 ## 남은 문제
 
-- OpenAI 실패 fallback은 명시적으로 표시하지만, local fallback이 자연어 calendar move를 실제 calendar proposal로 파싱하지는 않는다.
-- theme/accent는 주요 accent UI에 적용되지만, 전체 light/dark shell token 체계는 더 넓은 디자인 패스가 필요하다.
-- calendar는 현재 2026년 6월 fixture이며 month navigation과 real Google/Apple two-way sync adapter는 남아 있다.
-- Workspace API validation은 여전히 activePage 중심이라 page tree 전체/전체 pages/database schema 검증은 강화가 필요하다.
-- DB filter/sort, field schema edit, keyboard-first DB row 이동은 남아 있다.
-- modal focus trap, drag keyboard fallback, database keyboard accessibility는 후속 a11y 패스가 필요하다.
+- Slash menu 검색/필터는 아직 남아 있다.
+- AI drawer 자체의 focus trap은 아직 modal처럼 강제하지 않았다. settings modal focus trap/restore는 완료했다.
+- 1024/1023 sidebar breakpoint 전환과 좁은 board view 4-column UX는 추가 패스가 필요하다.
+- Google/Apple Calendar는 mocked preview adapter/test만 있으며 실제 provider auth, write, conflict resolver UI는 남아 있다.
+- Calendar data는 여전히 fixture 기반이며, provider-backed event source는 후속 작업이다.

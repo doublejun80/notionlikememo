@@ -5,6 +5,7 @@ import {
   CalendarDays,
   Check,
   CheckSquare,
+  ChevronLeft,
   ChevronDown,
   ChevronRight,
   Circle,
@@ -23,6 +24,7 @@ import {
   Search,
   Settings,
   Share2,
+  SlidersHorizontal,
   Sparkles,
   Table2,
   Text,
@@ -35,6 +37,7 @@ import TaskItem from "@tiptap/extension-task-item";
 import TaskList from "@tiptap/extension-task-list";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -49,15 +52,19 @@ import { cn } from "@/lib/utils";
 import {
   addDatabaseRow,
   approveAiAction,
+  changeCalendarMonth,
   createNewPage,
   createAiRun,
   createAiRunFromOperatorPlan,
   defaultNodiaryState,
+  getDatabaseRowsForView,
   insertBlockFromSlash,
   insertParagraphBlock,
   moveBlock,
+  moveBlockByKeyboard,
   moveDatabaseRow,
   movePageNode,
+  movePageNodeByKeyboard,
   rejectAiAction,
   requestCalendarEventMove,
   selectCalendarDate,
@@ -65,13 +72,19 @@ import {
   switchDatabaseView,
   togglePageNodeExpanded,
   undoLastAiAction,
+  updateDatabaseField,
+  updateDatabaseFilter,
+  updateDatabaseSort,
   updateBlockText,
   updateBlockTitle,
   updatePageTitle,
   updatePreference,
   updateTodoBlock,
   type DatabaseBlock,
+  type DatabaseField,
+  type DatabaseFilter,
   type DatabaseRow,
+  type DatabaseSort,
   type DatabaseViewType,
   type NodiaryBlock,
   type NodiaryState,
@@ -98,6 +111,13 @@ const databaseStatusLabel: Record<DatabaseRow["status"], string> = {
   doing: "진행",
   review: "검토",
   done: "완료"
+};
+
+const databaseFieldTypeLabel: Record<DatabaseField["type"], string> = {
+  text: "텍스트",
+  status: "상태",
+  date: "날짜",
+  person: "사람"
 };
 
 type CapturedItem = {
@@ -146,14 +166,12 @@ const accentTokens: Record<
 };
 
 export function NodiaryWorkspace() {
-  const [state, setState] = useState(() => loadStoredWorkspaceState());
+  const [state, setState] = useState(() => defaultNodiaryState());
   const [isMobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [isSlashOpen, setSlashOpen] = useState(false);
   const [slashAnchorBlockId, setSlashAnchorBlockId] = useState("memo-body");
   const [isSettingsOpen, setSettingsOpen] = useState(false);
-  const [isAiPanelOpen, setAiPanelOpen] = useState(
-    state.preferences.rightAiPanel === "open"
-  );
+  const [isAiPanelOpen, setAiPanelOpen] = useState(false);
   const [aiInput, setAiInput] = useState("");
   const [aiNotice, setAiNotice] = useState("");
   const [quickCapture, setQuickCapture] = useState("");
@@ -173,23 +191,35 @@ export function NodiaryWorkspace() {
     state.preferences.documentWidth === "wide" ? "max-w-[900px]" : "max-w-[800px]";
   const densityClass =
     state.preferences.density === "compact" ? "nodiary-density-compact" : "";
-  const themeStyle = getWorkspaceThemeStyle(state.preferences.accent);
-  const isDarkTheme = state.preferences.theme === "dark";
+  const themeStyle = getWorkspaceThemeStyle(
+    state.preferences.accent,
+    state.preferences.theme
+  );
 
   useEffect(() => {
-    if (shouldCloseInitialAiPanelOnSmallScreen(state.preferences.rightAiPanel)) {
-      const timeoutId = window.setTimeout(() => setAiPanelOpen(false), 0);
+    const timeoutId = window.setTimeout(() => {
+      setAiPanelOpen(
+        shouldOpenAiPanelFromStoredPreference(state.preferences.rightAiPanel)
+      );
+    }, 0);
 
-      return () => window.clearTimeout(timeoutId);
-    }
-
-    return undefined;
+    return () => window.clearTimeout(timeoutId);
   }, [state.preferences.rightAiPanel]);
 
   useEffect(() => {
     let isCancelled = false;
 
     async function hydrateWorkspace() {
+      function applyHydratedState(hydratedState: NodiaryState) {
+        setState(hydratedState);
+        setActivePageId(hydratedState.activePage.id);
+        setAiPanelOpen(
+          shouldOpenAiPanelFromStoredPreference(
+            hydratedState.preferences.rightAiPanel
+          )
+        );
+      }
+
       try {
         const headers = getNodiarySessionHeaders();
         const response = await fetch(
@@ -208,15 +238,17 @@ export function NodiaryWorkspace() {
         const payload = (await response.json()) as { state?: unknown };
         const hydratedState = readHydratedWorkspaceState(payload.state);
 
-        if (!hydratedState || isCancelled) {
-          return;
+        if (!hydratedState) {
+          throw new Error("Workspace API returned invalid state");
         }
 
-        setState(hydratedState);
-        setActivePageId(hydratedState.activePage.id);
-        setAiPanelOpen(hydratedState.preferences.rightAiPanel === "open");
+        if (!isCancelled) {
+          applyHydratedState(hydratedState);
+        }
       } catch {
-        // The localStorage fallback keeps the editor usable offline or before API boot.
+        if (!isCancelled) {
+          applyHydratedState(loadStoredWorkspaceState());
+        }
       } finally {
         if (!isCancelled) {
           hasHydratedWorkspaceRef.current = true;
@@ -392,11 +424,11 @@ export function NodiaryWorkspace() {
   return (
     <div
       className={cn(
-        "flex h-dvh overflow-hidden",
-        isDarkTheme ? "bg-[#1f1d1a] text-[#f4f1ea]" : "bg-[#fbfaf7] text-[#24211d]",
+        "flex h-dvh overflow-hidden bg-[var(--nodiary-app-bg)] text-[var(--nodiary-text)]",
         densityClass
       )}
       data-accent={state.preferences.accent}
+      data-testid="nodiary-workspace"
       data-theme={state.preferences.theme}
       style={themeStyle}
     >
@@ -414,8 +446,14 @@ export function NodiaryWorkspace() {
             })
           )
         }
+        onCalendarMonthChange={(direction) =>
+          setState((current) => changeCalendarMonth(current, direction))
+        }
         onMovePageNode={(nodeId, parentNodeId, index) =>
           setState((current) => movePageNode(current, nodeId, parentNodeId, index))
+        }
+        onMovePageNodeByKeyboard={(nodeId, direction) =>
+          setState((current) => movePageNodeByKeyboard(current, nodeId, direction))
         }
         capturedItems={capturedItems}
         onCreatePage={createPage}
@@ -447,10 +485,7 @@ export function NodiaryWorkspace() {
           pageTitle={state.activePage.title}
         />
         <main
-          className={cn(
-            "min-h-0 min-w-0 flex-1 overflow-auto",
-            isDarkTheme ? "bg-[#211f1c]" : "bg-white"
-          )}
+          className="min-h-0 min-w-0 flex-1 overflow-auto bg-[var(--nodiary-canvas)]"
         >
           <DocumentCanvas
             blocks={state.activePage.blocks}
@@ -472,9 +507,27 @@ export function NodiaryWorkspace() {
             onMoveBlock={(blockId, beforeBlockId) =>
               setState((current) => moveBlock(current, blockId, beforeBlockId))
             }
+            onMoveBlockByKeyboard={(blockId, direction) =>
+              setState((current) => moveBlockByKeyboard(current, blockId, direction))
+            }
             onMoveDatabaseRow={(databaseBlockId, rowId, patch) =>
               setState((current) =>
                 moveDatabaseRow(current, databaseBlockId, rowId, patch)
+              )
+            }
+            onUpdateDatabaseField={(databaseBlockId, fieldId, patch) =>
+              setState((current) =>
+                updateDatabaseField(current, databaseBlockId, fieldId, patch)
+              )
+            }
+            onUpdateDatabaseFilter={(databaseBlockId, patch) =>
+              setState((current) =>
+                updateDatabaseFilter(current, databaseBlockId, patch)
+              )
+            }
+            onUpdateDatabaseSort={(databaseBlockId, sort) =>
+              setState((current) =>
+                updateDatabaseSort(current, databaseBlockId, sort)
               )
             }
             onOpenSlash={openSlash}
@@ -558,8 +611,14 @@ export function NodiaryWorkspace() {
                 })
               )
             }
+            onCalendarMonthChange={(direction) =>
+              setState((current) => changeCalendarMonth(current, direction))
+            }
             onMovePageNode={(nodeId, parentNodeId, index) =>
               setState((current) => movePageNode(current, nodeId, parentNodeId, index))
+            }
+            onMovePageNodeByKeyboard={(nodeId, direction) =>
+              setState((current) => movePageNodeByKeyboard(current, nodeId, direction))
             }
             capturedItems={capturedItems}
             onClose={() => setMobileSidebarOpen(false)}
@@ -639,10 +698,12 @@ type SidebarProps = {
   state: ReturnType<typeof defaultNodiaryState>;
   onCalendarDateSelect: (isoDate: string) => void;
   onCalendarEventMove: (eventId: string, isoDate: string) => void;
+  onCalendarMonthChange: (direction: "previous" | "next") => void;
   onClose?: () => void;
   onCreatePage: () => void;
   onFocusQuickCapture: () => void;
   onMovePageNode: (nodeId: string, parentNodeId: string, index: number) => void;
+  onMovePageNodeByKeyboard: (nodeId: string, direction: "up" | "down") => void;
   onOpenAi: () => void;
   onOpenInbox: () => void;
   onOpenSearch: () => void;
@@ -660,10 +721,12 @@ function NodiarySidebar({
   className,
   onCalendarDateSelect,
   onCalendarEventMove,
+  onCalendarMonthChange,
   onClose,
   onCreatePage,
   onFocusQuickCapture,
   onMovePageNode,
+  onMovePageNodeByKeyboard,
   onOpenAi,
   onOpenInbox,
   onOpenSearch,
@@ -680,16 +743,16 @@ function NodiarySidebar({
   return (
     <aside
       className={cn(
-        "w-[320px] shrink-0 flex-col overflow-hidden border-r border-[#e4e0d8] bg-[#f4f2ee] px-3 py-3",
+        "w-[320px] shrink-0 flex-col overflow-hidden border-r border-[var(--nodiary-border)] bg-[var(--nodiary-sidebar)] px-3 py-3",
         className
       )}
     >
       <div className="flex h-9 shrink-0 items-center gap-2 px-2">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-[#24211d] text-white">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-[var(--nodiary-text)] text-white">
             <NotebookPen className="h-3.5 w-3.5" aria-hidden="true" />
           </span>
-          <span className="truncate text-[12px] font-bold tracking-[0.14em] text-[#7c766d]">
+          <span className="truncate text-[12px] font-bold tracking-[0.14em] text-[var(--nodiary-muted-strong)]">
             NODIARY
           </span>
         </div>
@@ -697,19 +760,19 @@ function NodiarySidebar({
           <div className="flex shrink-0 items-center gap-1">
             <button
               aria-label="설정 열기"
-              className="flex h-8 w-8 items-center justify-center rounded hover:bg-white"
+              className="flex h-8 w-8 items-center justify-center rounded hover:bg-[var(--nodiary-hover)]"
               onClick={onOpenSettings}
               type="button"
             >
-              <Settings className="h-4 w-4 text-[#6f6a61]" aria-hidden="true" />
+              <Settings className="h-4 w-4 text-[var(--nodiary-muted)]" aria-hidden="true" />
             </button>
             <button
               aria-label="사이드바 닫기"
-              className="flex h-8 w-8 items-center justify-center rounded hover:bg-white"
+              className="flex h-8 w-8 items-center justify-center rounded hover:bg-[var(--nodiary-hover)]"
               onClick={onClose}
               type="button"
             >
-              <X className="h-4 w-4 text-[#6f6a61]" aria-hidden="true" />
+              <X className="h-4 w-4 text-[var(--nodiary-muted)]" aria-hidden="true" />
             </button>
           </div>
         ) : null}
@@ -723,18 +786,36 @@ function NodiarySidebar({
           <SidebarUtilityRow icon={Sparkles} label="AI 글쓰기" onClick={onOpenAi} />
         </div>
 
-        <div className="mt-4 border-t border-[#e4e0d8] pt-4">
+        <div className="mt-4 border-t border-[var(--nodiary-border)] pt-4">
           <div className="flex h-8 items-center justify-between px-2">
-            <div className="text-[13px] font-semibold text-[#3a3630]">
+            <div className="text-[13px] font-semibold text-[var(--nodiary-text-strong)]">
               {state.sidebarCalendar.monthLabel}
             </div>
-            <button
-              className="h-8 rounded px-2 text-[12px] font-medium text-[#6f6a61] hover:bg-white"
-              onClick={() => onCalendarDateSelect("2026-06-16")}
-              type="button"
-            >
-              오늘
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                aria-label="이전 달"
+                className="flex h-8 w-8 items-center justify-center rounded text-[var(--nodiary-muted)] hover:bg-[var(--nodiary-hover)]"
+                onClick={() => onCalendarMonthChange("previous")}
+                type="button"
+              >
+                <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+              </button>
+              <button
+                className="h-8 rounded px-2 text-[12px] font-medium text-[var(--nodiary-muted)] hover:bg-[var(--nodiary-hover)]"
+                onClick={() => onCalendarDateSelect("2026-06-16")}
+                type="button"
+              >
+                오늘
+              </button>
+              <button
+                aria-label="다음 달"
+                className="flex h-8 w-8 items-center justify-center rounded text-[var(--nodiary-muted)] hover:bg-[var(--nodiary-hover)]"
+                onClick={() => onCalendarMonthChange("next")}
+                type="button"
+              >
+                <ChevronRight className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
           </div>
           <MiniCalendar
             onSelectDate={onCalendarDateSelect}
@@ -745,7 +826,7 @@ function NodiarySidebar({
           />
           <div className="mt-3 space-y-2 px-1">
             {state.sidebarCalendar.schedule.length === 0 ? (
-              <div className="rounded-md border border-dashed border-[#dedad1] bg-white/50 px-3 py-2 text-[12px] leading-5 text-[#8c867c]">
+              <div className="rounded-md border border-dashed border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel-muted)] px-3 py-2 text-[12px] leading-5 text-[var(--nodiary-muted-soft)]">
                 선택한 날짜에 일정이 없습니다.
               </div>
             ) : null}
@@ -753,7 +834,7 @@ function NodiarySidebar({
               <button
                 aria-label={`일정 드래그: ${event.title}`}
                 key={event.id}
-                className="flex min-h-11 w-full items-start gap-2 rounded-md bg-[#ebe7df] px-2.5 py-2 text-left hover:bg-white"
+                className="flex min-h-11 w-full items-start gap-2 rounded-md bg-[var(--nodiary-selected)] px-2.5 py-2 text-left hover:bg-[var(--nodiary-hover)]"
                 draggable
                 onDragStart={(dragEvent) => {
                   dragEvent.dataTransfer.setData(
@@ -764,13 +845,13 @@ function NodiarySidebar({
                 }}
                 type="button"
               >
-                <span className="min-w-[44px] text-[12px] font-semibold text-[#3a3630]">
+                <span className="min-w-[44px] text-[12px] font-semibold text-[var(--nodiary-text-strong)]">
                   {event.time}
                 </span>
-                <span className="min-w-0 text-[12px] leading-5 text-[#6f6a61]">
+                <span className="min-w-0 text-[12px] leading-5 text-[var(--nodiary-muted)]">
                   {event.title}
                   {event.conflictRisk ? (
-                    <span className="ml-2 rounded bg-[#fff3e2] px-1.5 py-0.5 text-[10px] font-semibold text-[#9a5a1f]">
+                    <span className="ml-2 rounded bg-[var(--nodiary-warning-bg)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--nodiary-warning-text)]">
                       {event.conflictRisk} risk
                     </span>
                   ) : null}
@@ -780,18 +861,18 @@ function NodiarySidebar({
           </div>
         </div>
 
-        <div className="mt-4 border-t border-[#e4e0d8] pt-3">
+        <div className="mt-4 border-t border-[var(--nodiary-border)] pt-3">
           <div className="flex h-7 items-center justify-between px-2">
-            <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#8c867c]">
+            <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--nodiary-muted-soft)]">
               Pages
             </span>
             <button
               aria-label="새 페이지"
-              className="flex h-8 w-8 items-center justify-center rounded hover:bg-white"
+              className="flex h-8 w-8 items-center justify-center rounded hover:bg-[var(--nodiary-hover)]"
               onClick={onCreatePage}
               type="button"
             >
-              <Plus className="h-4 w-4 text-[#8c867c]" aria-hidden="true" />
+              <Plus className="h-4 w-4 text-[var(--nodiary-muted-soft)]" aria-hidden="true" />
             </button>
           </div>
           <nav aria-label="페이지 트리" className="mt-1 space-y-0.5">
@@ -801,6 +882,7 @@ function NodiarySidebar({
                 key={node.id}
                 node={node}
                 onMovePageNode={onMovePageNode}
+                onMovePageNodeByKeyboard={onMovePageNodeByKeyboard}
                 onSelectPage={onSelectPage}
                 onTogglePageExpanded={onTogglePageExpanded}
               />
@@ -811,17 +893,17 @@ function NodiarySidebar({
 
       <div className="shrink-0">
         <form
-          className="mt-3 border-t border-[#e4e0d8] pt-3"
+          className="mt-3 border-t border-[var(--nodiary-border)] pt-3"
           onSubmit={(event) => {
             event.preventDefault();
             onSubmitQuickCapture();
           }}
         >
-          <label className="px-2 text-[11px] font-semibold text-[#8c867c]">
+          <label className="px-2 text-[11px] font-semibold text-[var(--nodiary-muted-soft)]">
             QUICK CAPTURE
             <input
               ref={quickCaptureInputRef}
-              className="mt-2 h-10 w-full rounded border border-[#dedad1] bg-white px-2 text-[12px] text-[#24211d] outline-none placeholder:text-[#9a948a] focus:border-[var(--nodiary-accent)]"
+              className="mt-2 h-10 w-full rounded border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-2 text-[12px] text-[var(--nodiary-text)] outline-none placeholder:text-[var(--nodiary-placeholder)] focus:border-[var(--nodiary-accent)]"
               onChange={(event) => onQuickCapture(event.target.value)}
               placeholder="떠오른 생각을 Inbox로"
               value={quickCapture}
@@ -830,7 +912,7 @@ function NodiarySidebar({
         </form>
 
         {workspaceNotice ? (
-          <div className="mt-2 rounded-md bg-white px-2.5 py-2 text-[12px] leading-5 text-[var(--nodiary-accent)]">
+          <div className="mt-2 rounded-md bg-[var(--nodiary-panel)] px-2.5 py-2 text-[12px] leading-5 text-[var(--nodiary-accent)]">
             {workspaceNotice}
           </div>
         ) : null}
@@ -839,10 +921,10 @@ function NodiarySidebar({
           <div className="mt-2 space-y-1">
             {capturedItems.slice(0, 2).map((item) => (
               <div
-                className="rounded-md bg-[#ebe7df] px-2.5 py-2 text-[12px] leading-5 text-[#6f6a61]"
+                className="rounded-md bg-[var(--nodiary-selected)] px-2.5 py-2 text-[12px] leading-5 text-[var(--nodiary-muted)]"
                 key={item.id}
               >
-                <div className="font-medium text-[#3a3630]">{item.createdLabel}</div>
+                <div className="font-medium text-[var(--nodiary-text-strong)]">{item.createdLabel}</div>
                 <div className="truncate">{item.text}</div>
               </div>
             ))}
@@ -851,7 +933,7 @@ function NodiarySidebar({
 
         <button
           aria-label="설정 열기"
-          className="mt-3 flex h-10 w-full items-center gap-2 rounded-md px-2 text-[13px] text-[#6f6a61] hover:bg-white hover:text-[#24211d]"
+          className="mt-3 flex h-10 w-full items-center gap-2 rounded-md px-2 text-[13px] text-[var(--nodiary-muted)] hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-text)]"
           onClick={onOpenSettings}
           type="button"
         >
@@ -876,7 +958,7 @@ function SidebarUtilityRow({
 }) {
   return (
     <button
-      className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] font-semibold tracking-[0.04em] text-[#8c867c] hover:bg-white hover:text-[#24211d]"
+      className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] font-semibold tracking-[0.04em] text-[var(--nodiary-muted-soft)] hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-text)]"
       onClick={onClick}
       type="button"
     >
@@ -892,6 +974,7 @@ function PageTreeRow({
   activePageId,
   node,
   onMovePageNode,
+  onMovePageNodeByKeyboard,
   onSelectPage,
   onTogglePageExpanded,
   depth = 0
@@ -899,6 +982,7 @@ function PageTreeRow({
   activePageId: string;
   node: PageNode;
   onMovePageNode: (nodeId: string, parentNodeId: string, index: number) => void;
+  onMovePageNodeByKeyboard: (nodeId: string, direction: "up" | "down") => void;
   onSelectPage: (pageId: string) => void;
   onTogglePageExpanded: (nodeId: string) => void;
   depth?: number;
@@ -923,15 +1007,29 @@ function PageTreeRow({
     >
       <div
         className={cn(
-          "flex h-8 w-full items-center gap-1 rounded-md pr-2 text-left text-[13px] text-[#7c766d] hover:bg-white hover:text-[#24211d]",
-          activePageId === node.id && "bg-[#ebe7df] font-medium text-[#24211d]"
+          "flex h-8 w-full items-center gap-1 rounded-md pr-2 text-left text-[13px] text-[var(--nodiary-muted-strong)] hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-text)]",
+          activePageId === node.id && "bg-[var(--nodiary-selected)] font-medium text-[var(--nodiary-text)]"
         )}
         style={{ paddingLeft: 8 + depth * 18 }}
       >
         <button
           aria-label={hasChildren ? `페이지 펼치기/접기: ${node.title}` : `페이지 드래그: ${node.title}`}
-          className="flex h-6 w-5 shrink-0 items-center justify-center rounded text-[#aaa399] hover:bg-[#f7f5f0] hover:text-[#6f6a61]"
+          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+          className="flex h-6 w-5 shrink-0 items-center justify-center rounded text-[var(--nodiary-icon-muted)] hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-muted)]"
           draggable={!hasChildren}
+          onKeyDown={(event) => {
+            if (!event.altKey) {
+              return;
+            }
+
+            if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+              event.preventDefault();
+              onMovePageNodeByKeyboard(
+                node.id,
+                event.key === "ArrowUp" ? "up" : "down"
+              );
+            }
+          }}
           onDragStart={(event) => {
             if (hasChildren) {
               return;
@@ -955,8 +1053,22 @@ function PageTreeRow({
         {hasChildren ? (
           <button
             aria-label={`페이지 드래그: ${node.title}`}
-            className="flex h-6 w-5 shrink-0 items-center justify-center rounded text-[#aaa399] hover:bg-[#f7f5f0] hover:text-[#6f6a61]"
+            aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+            className="flex h-6 w-5 shrink-0 items-center justify-center rounded text-[var(--nodiary-icon-muted)] hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-muted)]"
             draggable
+            onKeyDown={(event) => {
+              if (!event.altKey) {
+                return;
+              }
+
+              if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+                event.preventDefault();
+                onMovePageNodeByKeyboard(
+                  node.id,
+                  event.key === "ArrowUp" ? "up" : "down"
+                );
+              }
+            }}
             onDragStart={(event) => {
               event.dataTransfer.setData("text/nodiary-page", node.id);
               event.dataTransfer.setData("text/plain", node.id);
@@ -982,6 +1094,7 @@ function PageTreeRow({
               key={child.id}
               node={child}
               onMovePageNode={onMovePageNode}
+              onMovePageNodeByKeyboard={onMovePageNodeByKeyboard}
               onSelectPage={onSelectPage}
               onTogglePageExpanded={onTogglePageExpanded}
             />
@@ -1005,7 +1118,7 @@ function MiniCalendar({
 }) {
   return (
     <div className="mt-2 px-2">
-      <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-[#8c867c]">
+      <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-[var(--nodiary-muted-soft)]">
         {["월", "화", "수", "목", "금", "토", "일"].map((day) => (
           <div className="h-6 leading-6" key={day}>
             {day}
@@ -1023,8 +1136,8 @@ function MiniCalendar({
               aria-current={day.isToday ? "date" : undefined}
               aria-label={`${day.isoDate}${day.isSelected ? " 선택됨" : ""}`}
               className={cn(
-                "flex h-8 w-full items-center justify-center rounded-md text-[12px] leading-none text-[#6f6a61] hover:bg-white",
-                day.hasEvent && "bg-[#ebe7df]",
+                "flex h-8 w-full items-center justify-center rounded-md text-[12px] leading-none text-[var(--nodiary-muted)] hover:bg-[var(--nodiary-hover)]",
+                day.hasEvent && "bg-[var(--nodiary-selected)]",
                 day.isSelected && "bg-[var(--nodiary-accent)] font-semibold text-white hover:bg-[var(--nodiary-accent)]"
               )}
               onClick={() => onSelectDate(day.isoDate)}
@@ -1068,11 +1181,11 @@ function NodiaryTopBar({
   onToggleAiPanel: () => void;
 }) {
   return (
-    <header className="flex h-12 shrink-0 items-center justify-between border-b border-[#eeeae3] bg-white px-2 text-[13px] sm:px-3">
-      <div className="flex min-w-0 items-center gap-2 text-[#8c867c]">
+    <header className="flex h-12 shrink-0 items-center justify-between border-b border-[var(--nodiary-border)] bg-[var(--nodiary-panel)] px-2 text-[13px] sm:px-3">
+      <div className="flex min-w-0 items-center gap-2 text-[var(--nodiary-muted-soft)]">
         <button
           aria-label="사이드바 열기"
-          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[#f4f2ee] lg:hidden"
+          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)] lg:hidden"
           onClick={onOpenMobileSidebar}
           type="button"
         >
@@ -1080,12 +1193,12 @@ function NodiaryTopBar({
         </button>
         <span className="hidden sm:inline">Pages</span>
         <ChevronRight className="hidden h-4 w-4 sm:block" aria-hidden="true" />
-        <span className="truncate font-medium text-[#3a3630]">{pageTitle}</span>
+        <span className="truncate font-medium text-[var(--nodiary-text-strong)]">{pageTitle}</span>
       </div>
-      <div className="flex items-center gap-1 text-[#6f6a61]">
+      <div className="flex items-center gap-1 text-[var(--nodiary-muted)]">
         <button
           aria-label="댓글"
-          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[#f4f2ee] sm:w-auto sm:gap-1.5 sm:px-2"
+          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)] sm:w-auto sm:gap-1.5 sm:px-2"
           onClick={() => onAnnounce("댓글 패널은 다음 검수 패스에서 연결할 예정입니다.")}
           type="button"
         >
@@ -1094,7 +1207,7 @@ function NodiaryTopBar({
         </button>
         <button
           aria-label="공유"
-          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[#f4f2ee] sm:w-auto sm:gap-1.5 sm:px-2"
+          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)] sm:w-auto sm:gap-1.5 sm:px-2"
           onClick={() => onAnnounce("공유 기능은 로컬 문서 보존 검수 이후 연결합니다.")}
           type="button"
         >
@@ -1103,7 +1216,7 @@ function NodiaryTopBar({
         </button>
         <button
           aria-label={isAiPanelOpen ? "AI 패널 닫기" : "AI 패널 열기"}
-          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[#f4f2ee]"
+          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)]"
           onClick={onToggleAiPanel}
           type="button"
         >
@@ -1115,7 +1228,7 @@ function NodiaryTopBar({
         </button>
         <button
           aria-label="설정 열기"
-          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[#f4f2ee]"
+          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)]"
           onClick={onOpenSettings}
           type="button"
         >
@@ -1123,7 +1236,7 @@ function NodiaryTopBar({
         </button>
         <button
           aria-label="더보기"
-          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[#f4f2ee]"
+          className="flex h-10 w-10 items-center justify-center rounded hover:bg-[var(--nodiary-soft)]"
           onClick={onOpenCommandPalette}
           type="button"
         >
@@ -1142,10 +1255,14 @@ function DocumentCanvas({
   onCloseSlash,
   onInsertParagraph,
   onMoveBlock,
+  onMoveBlockByKeyboard,
   onMoveDatabaseRow,
   onOpenSlash,
   onSlashInsert,
   onSwitchDatabaseView,
+  onUpdateDatabaseField,
+  onUpdateDatabaseFilter,
+  onUpdateDatabaseSort,
   onUpdateBlockText,
   onUpdateBlockTitle,
   onUpdatePageTitle,
@@ -1160,12 +1277,23 @@ function DocumentCanvas({
   pageTitle: string;
   slashOpen: boolean;
   onAddDatabaseRow: (databaseBlockId: string) => void;
+  onMoveBlockByKeyboard: (blockId: string, direction: "up" | "down") => void;
   onMoveBlock: (blockId: string, beforeBlockId: string) => void;
   onMoveDatabaseRow: (
     databaseBlockId: string,
     rowId: string,
     patch: Parameters<typeof moveDatabaseRow>[3]
   ) => void;
+  onUpdateDatabaseField: (
+    databaseBlockId: string,
+    fieldId: string,
+    patch: Partial<Pick<DatabaseField, "name" | "type">>
+  ) => void;
+  onUpdateDatabaseFilter: (
+    databaseBlockId: string,
+    patch: Partial<DatabaseFilter>
+  ) => void;
+  onUpdateDatabaseSort: (databaseBlockId: string, sort: DatabaseSort) => void;
   onCloseSlash: () => void;
   onInsertParagraph: (text: string) => void;
   onOpenSlash: (anchorBlockId?: string) => void;
@@ -1182,7 +1310,7 @@ function DocumentCanvas({
   return (
     <div className={cn("mx-auto min-h-full px-6 pb-24 pt-14 sm:px-8", documentWidthClass)}>
       <h1
-        className="min-h-[68px] text-[38px] font-bold leading-tight tracking-normal text-[#24211d] outline-none sm:text-[42px]"
+        className="min-h-[68px] text-[38px] font-bold leading-tight tracking-normal text-[var(--nodiary-text)] outline-none sm:text-[42px]"
         contentEditable
         onBlur={(event) =>
           onUpdatePageTitle(event.currentTarget.textContent ?? "")
@@ -1194,8 +1322,8 @@ function DocumentCanvas({
       <div className="mt-4 grid max-w-xl grid-cols-[88px_1fr] gap-x-4 gap-y-3 text-[14px]">
         {pageProperties.map((property) => (
           <div className="contents" key={property.label}>
-            <div className="text-[#7c766d]">{property.label}</div>
-            <div className="font-medium text-[#3a3630]">{property.value}</div>
+            <div className="text-[var(--nodiary-muted-strong)]">{property.label}</div>
+            <div className="font-medium text-[var(--nodiary-text-strong)]">{property.value}</div>
           </div>
         ))}
       </div>
@@ -1206,10 +1334,14 @@ function DocumentCanvas({
             block={block}
             key={block.id}
             onAddDatabaseRow={onAddDatabaseRow}
+            onMoveBlockByKeyboard={onMoveBlockByKeyboard}
             onMoveBlock={onMoveBlock}
             onMoveDatabaseRow={onMoveDatabaseRow}
             onOpenSlash={onOpenSlash}
             onSwitchDatabaseView={onSwitchDatabaseView}
+            onUpdateDatabaseField={onUpdateDatabaseField}
+            onUpdateDatabaseFilter={onUpdateDatabaseFilter}
+            onUpdateDatabaseSort={onUpdateDatabaseSort}
             onUpdateBlockText={onUpdateBlockText}
             onUpdateBlockTitle={onUpdateBlockTitle}
             onUpdateTodo={onUpdateTodo}
@@ -1220,7 +1352,7 @@ function DocumentCanvas({
       <div className="relative mt-4 pl-9">
         <button
           aria-label="빈 블록 입력"
-          className="flex min-h-10 w-full items-center rounded-md px-3 text-left text-[14px] text-[#8c867c] outline-none hover:bg-[#f7f5f0] focus:bg-[#f7f5f0]"
+          className="flex min-h-10 w-full items-center rounded-md px-3 text-left text-[14px] text-[var(--nodiary-muted-soft)] outline-none hover:bg-[var(--nodiary-hover)] focus:bg-[var(--nodiary-hover)]"
           onKeyDown={(event) => {
             if (isSlashOpen && handleSlashMenuKeyDown(event, onSlashInsert, onCloseSlash)) {
               return;
@@ -1252,9 +1384,13 @@ function DocumentBlock({
   block,
   onAddDatabaseRow,
   onMoveBlock,
+  onMoveBlockByKeyboard,
   onMoveDatabaseRow,
   onOpenSlash,
   onSwitchDatabaseView,
+  onUpdateDatabaseField,
+  onUpdateDatabaseFilter,
+  onUpdateDatabaseSort,
   onUpdateBlockText,
   onUpdateBlockTitle,
   onUpdateTodo
@@ -1262,11 +1398,22 @@ function DocumentBlock({
   block: NodiaryBlock;
   onAddDatabaseRow: (databaseBlockId: string) => void;
   onMoveBlock: (blockId: string, beforeBlockId: string) => void;
+  onMoveBlockByKeyboard: (blockId: string, direction: "up" | "down") => void;
   onMoveDatabaseRow: (
     databaseBlockId: string,
     rowId: string,
     patch: Parameters<typeof moveDatabaseRow>[3]
   ) => void;
+  onUpdateDatabaseField: (
+    databaseBlockId: string,
+    fieldId: string,
+    patch: Partial<Pick<DatabaseField, "name" | "type">>
+  ) => void;
+  onUpdateDatabaseFilter: (
+    databaseBlockId: string,
+    patch: Partial<DatabaseFilter>
+  ) => void;
+  onUpdateDatabaseSort: (databaseBlockId: string, sort: DatabaseSort) => void;
   onOpenSlash: (anchorBlockId?: string) => void;
   onSwitchDatabaseView: (blockId: string, view: DatabaseViewType) => void;
   onUpdateBlockText: (blockId: string, text: string) => void;
@@ -1293,11 +1440,25 @@ function DocumentBlock({
         }
       }}
     >
-      <div className="flex h-9 items-center justify-center text-[#c0bab0] opacity-100 md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100">
+      <div className="flex h-9 items-center justify-center text-[var(--nodiary-icon-faint)] opacity-100 md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100">
         <button
           aria-label={`블록 드래그: ${getBlockLabel(block)}`}
-          className="flex h-7 w-7 items-center justify-center rounded hover:bg-[#f7f5f0] hover:text-[#6f6a61]"
+          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+          className="flex h-7 w-7 items-center justify-center rounded hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-muted)]"
           draggable
+          onKeyDown={(event) => {
+            if (!event.altKey) {
+              return;
+            }
+
+            if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+              event.preventDefault();
+              onMoveBlockByKeyboard(
+                block.id,
+                event.key === "ArrowUp" ? "up" : "down"
+              );
+            }
+          }}
           onDragStart={(event) => {
             event.dataTransfer.setData("text/nodiary-block", block.id);
             event.dataTransfer.setData("text/plain", block.id);
@@ -1310,7 +1471,7 @@ function DocumentBlock({
       <div className="min-w-0">
         {block.type === "heading" ? (
           <h2
-            className="min-h-10 rounded px-1 text-[26px] font-bold leading-10 tracking-normal outline-none hover:bg-[#f7f5f0]"
+            className="min-h-10 rounded px-1 text-[26px] font-bold leading-10 tracking-normal outline-none hover:bg-[var(--nodiary-hover)]"
             contentEditable
             onBlur={(event) =>
               onUpdateBlockTitle(block.id, event.currentTarget.textContent ?? "")
@@ -1332,8 +1493,8 @@ function DocumentBlock({
           />
         ) : null}
         {block.type === "callout" ? (
-          <div className="flex min-h-10 items-start gap-3 rounded-md bg-[#f4f2ee] px-3 py-2 text-[15px] leading-7 text-[#3a3630]">
-            <MessageSquareText className="mt-1 h-4 w-4 shrink-0 text-[#6f6a61]" />
+          <div className="flex min-h-10 items-start gap-3 rounded-md bg-[var(--nodiary-soft)] px-3 py-2 text-[15px] leading-7 text-[var(--nodiary-text-strong)]">
+            <MessageSquareText className="mt-1 h-4 w-4 shrink-0 text-[var(--nodiary-muted)]" />
             <RichTextBlock
               blockId={block.id}
               onChange={onUpdateBlockText}
@@ -1350,10 +1511,13 @@ function DocumentBlock({
             onAddRow={onAddDatabaseRow}
             onMoveRow={onMoveDatabaseRow}
             onSwitchView={onSwitchDatabaseView}
+            onUpdateField={onUpdateDatabaseField}
+            onUpdateFilter={onUpdateDatabaseFilter}
+            onUpdateSort={onUpdateDatabaseSort}
           />
         ) : null}
         {block.type === "ai" ? (
-          <div className="rounded-md border border-[#dedad1] bg-white px-3 py-2 text-[14px] text-[#6f6a61]">
+          <div className="rounded-md border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-3 py-2 text-[14px] text-[var(--nodiary-muted)]">
             <Bot className="mr-2 inline h-4 w-4 text-[var(--nodiary-accent)]" />
             {block.text}
           </div>
@@ -1413,7 +1577,7 @@ function RichTextBlock({
   return (
     <EditorContent
       className={cn(
-        "nodiary-tiptap min-h-8 rounded px-1 text-[15px] leading-8 outline-none hover:bg-[#f7f5f0]",
+        "nodiary-tiptap min-h-8 rounded px-1 text-[15px] leading-8 outline-none hover:bg-[var(--nodiary-hover)]",
         variant === "callout" && "flex-1 hover:bg-transparent"
       )}
       editor={editor}
@@ -1438,14 +1602,14 @@ function TodoBlock({
   ) => void;
 }) {
   return (
-    <label className="flex min-h-9 items-center gap-3 rounded px-1 text-[15px] leading-8 text-[#3a3630] hover:bg-[#f7f5f0]">
+    <label className="flex min-h-9 items-center gap-3 rounded px-1 text-[15px] leading-8 text-[var(--nodiary-text-strong)] hover:bg-[var(--nodiary-hover)]">
       <button
         aria-label={block.checked ? "할 일 완료됨" : "할 일 미완료"}
         className={cn(
           "flex h-9 w-9 shrink-0 items-center justify-center rounded border sm:h-[22px] sm:w-[22px]",
           block.checked
             ? "border-[var(--nodiary-accent)] bg-[var(--nodiary-accent)] text-white"
-            : "border-[#cfc9be] bg-white"
+            : "border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)]"
         )}
         onClick={(event) => {
           event.preventDefault();
@@ -1458,7 +1622,7 @@ function TodoBlock({
       <span
         className={cn(
           "min-w-0 outline-none",
-          block.checked && "text-[#8c867c] line-through"
+          block.checked && "text-[var(--nodiary-muted-soft)] line-through"
         )}
         contentEditable
         onBlur={(event) =>
@@ -1493,7 +1657,7 @@ function SlashMenu({
   return (
     <div
       aria-activedescendant={`slash-item-${activeIndex}`}
-      className="absolute bottom-11 left-0 right-0 z-20 max-h-[min(320px,calc(100vh-160px))] overflow-y-auto rounded-md border border-[#dedad1] bg-white shadow-[0_12px_36px_rgba(36,33,29,0.12)] sm:left-9 sm:right-auto sm:w-[320px]"
+      className="absolute bottom-11 left-0 right-0 z-20 max-h-[min(320px,calc(100vh-160px))] overflow-y-auto rounded-md border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] shadow-[0_12px_36px_rgba(36,33,29,0.12)] sm:left-9 sm:right-auto sm:w-[320px]"
       onKeyDown={(event) => {
         if (event.key === "ArrowDown") {
           event.preventDefault();
@@ -1519,15 +1683,15 @@ function SlashMenu({
       ref={menuRef}
       tabIndex={-1}
     >
-      <div className="border-b border-[#eeeae3] px-3 py-2 text-[12px] font-medium text-[#6f6a61]">
+      <div className="border-b border-[var(--nodiary-border-subtle)] px-3 py-2 text-[12px] font-medium text-[var(--nodiary-muted)]">
         / 입력 중
       </div>
       <div className="py-1">
         {slashItems.map((item, index) => (
           <button
             className={cn(
-              "flex h-11 w-full items-center gap-3 px-3 text-left text-[14px] text-[#3a3630] hover:bg-[#f7f5f0]",
-              activeIndex === index && "bg-[#f7f5f0]"
+              "flex h-11 w-full items-center gap-3 px-3 text-left text-[14px] text-[var(--nodiary-text-strong)] hover:bg-[var(--nodiary-hover)]",
+              activeIndex === index && "bg-[var(--nodiary-hover)]"
             )}
             id={`slash-item-${index}`}
             key={item.label}
@@ -1536,7 +1700,7 @@ function SlashMenu({
             role="menuitem"
             type="button"
           >
-            <span className="flex h-7 w-7 items-center justify-center rounded border border-[#dedad1] text-[#6f6a61]">
+            <span className="flex h-7 w-7 items-center justify-center rounded border border-[var(--nodiary-border-strong)] text-[var(--nodiary-muted)]">
               <item.icon className="h-4 w-4" aria-hidden="true" />
             </span>
             {item.label}
@@ -1572,7 +1736,10 @@ function DatabaseViewBlock({
   database,
   onAddRow,
   onMoveRow,
-  onSwitchView
+  onSwitchView,
+  onUpdateField,
+  onUpdateFilter,
+  onUpdateSort
 }: {
   blockId: string;
   database: DatabaseBlock;
@@ -1583,27 +1750,51 @@ function DatabaseViewBlock({
     patch: Parameters<typeof moveDatabaseRow>[3]
   ) => void;
   onSwitchView: (blockId: string, view: DatabaseViewType) => void;
+  onUpdateField: (
+    databaseBlockId: string,
+    fieldId: string,
+    patch: Partial<Pick<DatabaseField, "name" | "type">>
+  ) => void;
+  onUpdateFilter: (
+    databaseBlockId: string,
+    patch: Partial<DatabaseFilter>
+  ) => void;
+  onUpdateSort: (databaseBlockId: string, sort: DatabaseSort) => void;
 }) {
+  const [isFieldEditorOpen, setFieldEditorOpen] = useState(false);
+  const visibleRows = useMemo(() => getDatabaseRowsForView(database), [database]);
+  const filter = database.filter ?? { status: "all", query: "" };
+  const sort = database.sort ?? { fieldId: "title", direction: "asc" };
+
   return (
-    <section className="my-4 rounded-md border border-[#dedad1] bg-white">
-      <div className="flex flex-col gap-2 border-b border-[#eeeae3] px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+    <section className="my-4 rounded-md border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)]">
+      <div className="flex flex-col gap-2 border-b border-[var(--nodiary-border-subtle)] px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-2">
-          <Database className="h-4 w-4 shrink-0 text-[#6f6a61]" aria-hidden="true" />
-          <div className="truncate text-[15px] font-semibold text-[#24211d]">
+          <Database className="h-4 w-4 shrink-0 text-[var(--nodiary-muted)]" aria-hidden="true" />
+          <div className="truncate text-[15px] font-semibold text-[var(--nodiary-text)]">
             {database.name}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2 overflow-x-auto">
           <button
             aria-label="새 행 추가"
-            className="flex h-8 shrink-0 items-center gap-1.5 rounded border border-[#dedad1] bg-white px-2 text-[12px] font-medium text-[#3a3630] hover:bg-[#f7f5f0]"
+            className="flex h-8 shrink-0 items-center gap-1.5 rounded border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-2 text-[12px] font-medium text-[var(--nodiary-text-strong)] hover:bg-[var(--nodiary-hover)]"
             onClick={() => onAddRow(blockId)}
             type="button"
           >
             <Plus className="h-3.5 w-3.5" aria-hidden="true" />
             새 행
           </button>
-          <div className="flex shrink-0 rounded border border-[#dedad1] bg-[#f7f5f0] p-0.5">
+          <button
+            aria-expanded={isFieldEditorOpen}
+            className="flex h-8 shrink-0 items-center gap-1.5 rounded border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-2 text-[12px] font-medium text-[var(--nodiary-text-strong)] hover:bg-[var(--nodiary-hover)]"
+            onClick={() => setFieldEditorOpen((open) => !open)}
+            type="button"
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+            필드 편집
+          </button>
+          <div className="flex shrink-0 rounded border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-hover)] p-0.5">
             {(
               [
                 ["table", "표", Table2],
@@ -1614,8 +1805,8 @@ function DatabaseViewBlock({
             <button
               aria-selected={database.activeView === view}
               className={cn(
-                "flex h-7 items-center gap-1.5 rounded px-2 text-[12px] text-[#6f6a61]",
-                database.activeView === view && "bg-white font-medium text-[#24211d]"
+                "flex h-7 items-center gap-1.5 rounded px-2 text-[12px] text-[var(--nodiary-muted)]",
+                database.activeView === view && "bg-[var(--nodiary-panel)] font-medium text-[var(--nodiary-text)]"
               )}
               key={view}
               onClick={() => onSwitchView(blockId, view)}
@@ -1629,18 +1820,131 @@ function DatabaseViewBlock({
           </div>
         </div>
       </div>
+      <div className="grid gap-2 border-b border-[var(--nodiary-border-subtle)] bg-[var(--nodiary-panel-muted)] px-3 py-2 text-[12px] text-[var(--nodiary-muted)] md:grid-cols-[1fr_1fr_1fr_1fr]">
+        <label className="flex items-center gap-2">
+          상태
+          <select
+            aria-label="DB 필터 상태"
+            className="h-8 min-w-0 flex-1 rounded border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-2 outline-none focus:border-[var(--nodiary-accent)]"
+            onChange={(event) =>
+              onUpdateFilter(blockId, {
+                status: event.target.value as DatabaseFilter["status"]
+              })
+            }
+            value={filter.status}
+          >
+            <option value="all">전체</option>
+            {Object.entries(databaseStatusLabel).map(([status, label]) => (
+              <option key={status} value={status}>
+                상태: {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-2">
+          검색
+          <input
+            aria-label="DB 검색 필터"
+            className="h-8 min-w-0 flex-1 rounded border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-2 outline-none focus:border-[var(--nodiary-accent)]"
+            onChange={(event) =>
+              onUpdateFilter(blockId, {
+                query: event.target.value
+              })
+            }
+            value={filter.query}
+          />
+        </label>
+        <label className="flex items-center gap-2">
+          정렬
+          <select
+            aria-label="DB 정렬 필드"
+            className="h-8 min-w-0 flex-1 rounded border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-2 outline-none focus:border-[var(--nodiary-accent)]"
+            onChange={(event) =>
+              onUpdateSort(blockId, {
+                ...sort,
+                fieldId: event.target.value as DatabaseSort["fieldId"]
+              })
+            }
+            value={sort.fieldId}
+          >
+            {database.fields.map((field) => (
+              <option key={field.id} value={field.id}>
+                {field.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-2">
+          방향
+          <select
+            aria-label="DB 정렬 방향"
+            className="h-8 min-w-0 flex-1 rounded border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-2 outline-none focus:border-[var(--nodiary-accent)]"
+            onChange={(event) =>
+              onUpdateSort(blockId, {
+                ...sort,
+                direction: event.target.value as DatabaseSort["direction"]
+              })
+            }
+            value={sort.direction}
+          >
+            <option value="asc">오름차순</option>
+            <option value="desc">내림차순</option>
+          </select>
+        </label>
+      </div>
+      {isFieldEditorOpen ? (
+        <div className="grid gap-2 border-b border-[var(--nodiary-border-subtle)] bg-[var(--nodiary-panel)] px-3 py-3 text-[12px] text-[var(--nodiary-muted)] sm:grid-cols-2">
+          {database.fields.map((field) => (
+            <div className="grid gap-2 rounded border border-[var(--nodiary-border-subtle)] bg-[var(--nodiary-panel-muted)] p-2" key={field.id}>
+              <label className="flex items-center gap-2">
+                이름
+                <input
+                  aria-label={`필드 이름: ${getStableDatabaseFieldLabel(field)}`}
+                  className="h-8 min-w-0 flex-1 rounded border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-2 text-[var(--nodiary-text)] outline-none focus:border-[var(--nodiary-accent)]"
+                  onChange={(event) =>
+                    onUpdateField(blockId, field.id, {
+                      name: event.target.value
+                    })
+                  }
+                  value={field.name}
+                />
+              </label>
+              <label className="flex items-center gap-2">
+                유형
+                <select
+                  aria-label={`필드 유형: ${getStableDatabaseFieldLabel(field)}`}
+                  className="h-8 min-w-0 flex-1 rounded border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-2 text-[var(--nodiary-text)] outline-none focus:border-[var(--nodiary-accent)]"
+                  onChange={(event) =>
+                    onUpdateField(blockId, field.id, {
+                      type: event.target.value as DatabaseField["type"]
+                    })
+                  }
+                  value={field.type}
+                >
+                  {Object.entries(databaseFieldTypeLabel).map(([type, label]) => (
+                    <option key={type} value={type}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {database.activeView === "table" ? (
         <DatabaseTable
           blockId={blockId}
           database={database}
           onMoveRow={onMoveRow}
+          rows={visibleRows}
         />
       ) : null}
       {database.activeView === "board" ? (
         <DatabaseBoard
           blockId={blockId}
           onMoveRow={onMoveRow}
-          rows={database.rows}
+          rows={visibleRows}
         />
       ) : null}
       {database.activeView === "calendar" ? (
@@ -1648,6 +1952,7 @@ function DatabaseViewBlock({
           blockId={blockId}
           database={database}
           onMoveRow={onMoveRow}
+          rows={visibleRows}
         />
       ) : null}
     </section>
@@ -1657,7 +1962,8 @@ function DatabaseViewBlock({
 function DatabaseTable({
   blockId,
   database,
-  onMoveRow
+  onMoveRow,
+  rows
 }: {
   blockId: string;
   database: DatabaseBlock;
@@ -1666,11 +1972,12 @@ function DatabaseTable({
     rowId: string,
     patch: Parameters<typeof moveDatabaseRow>[3]
   ) => void;
+  rows: DatabaseRow[];
 }) {
   return (
     <div>
       <div className="space-y-2 p-3 md:hidden">
-        {database.rows.map((row) => (
+        {rows.map((row) => (
           <EditableDatabaseCard
             blockId={blockId}
             key={row.id}
@@ -1689,20 +1996,20 @@ function DatabaseTable({
           <col className="w-[18%]" />
           <col className="w-[22%]" />
         </colgroup>
-        <thead className="bg-[#fbfaf7] text-[#6f6a61]">
+        <thead className="bg-[var(--nodiary-panel-muted)] text-[var(--nodiary-muted)]">
           <tr>
             {database.fields.map((field) => (
-              <th className="border-b border-[#eeeae3] px-3 py-2 font-medium" key={field.id}>
+              <th className="border-b border-[var(--nodiary-border-subtle)] px-3 py-2 font-medium" key={field.id}>
                 {field.name}
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {database.rows.map((row) => (
+          {rows.map((row) => (
             <tr
               aria-label={`DB 행 드래그: ${row.title}`}
-              className="hover:bg-[#fbfaf7]"
+              className="hover:bg-[var(--nodiary-panel-muted)]"
               draggable
               key={row.id}
               onDragStart={(event) => {
@@ -1710,10 +2017,11 @@ function DatabaseTable({
                 event.dataTransfer.setData("text/plain", row.id);
               }}
             >
-              <td className="border-b border-[#eeeae3] px-3 py-2">
+              <td className="border-b border-[var(--nodiary-border-subtle)] px-3 py-2">
+                <span className="sr-only">{row.title}</span>
                 <input
                   aria-label={`DB 행 제목: ${row.title}`}
-                  className="h-8 w-full rounded border border-transparent bg-transparent px-2 font-medium text-[#24211d] outline-none hover:border-[#dedad1] focus:border-[var(--nodiary-accent)] focus:bg-white"
+                  className="h-8 w-full rounded border border-transparent bg-transparent px-2 font-medium text-[var(--nodiary-text)] outline-none hover:border-[var(--nodiary-border-strong)] focus:border-[var(--nodiary-accent)] focus:bg-[var(--nodiary-panel)]"
                   onChange={(event) =>
                     onMoveRow(blockId, row.id, {
                       title: event.target.value
@@ -1722,10 +2030,10 @@ function DatabaseTable({
                   value={row.title}
                 />
               </td>
-              <td className="border-b border-[#eeeae3] px-3 py-2">
+              <td className="border-b border-[var(--nodiary-border-subtle)] px-3 py-2">
                 <select
                   aria-label={`DB 행 상태: ${row.title}`}
-                  className="h-8 w-full rounded border border-transparent bg-transparent px-2 text-[#6f6a61] outline-none hover:border-[#dedad1] focus:border-[var(--nodiary-accent)] focus:bg-white"
+                  className="h-8 w-full rounded border border-transparent bg-transparent px-2 text-[var(--nodiary-muted)] outline-none hover:border-[var(--nodiary-border-strong)] focus:border-[var(--nodiary-accent)] focus:bg-[var(--nodiary-panel)]"
                   onChange={(event) =>
                     onMoveRow(blockId, row.id, {
                       status: event.target.value as DatabaseRow["status"]
@@ -1740,10 +2048,10 @@ function DatabaseTable({
                   ))}
                 </select>
               </td>
-              <td className="border-b border-[#eeeae3] px-3 py-2">
+              <td className="border-b border-[var(--nodiary-border-subtle)] px-3 py-2">
                 <input
                   aria-label={`DB 행 담당: ${row.title}`}
-                  className="h-8 w-full rounded border border-transparent bg-transparent px-2 text-[#6f6a61] outline-none hover:border-[#dedad1] focus:border-[var(--nodiary-accent)] focus:bg-white"
+                  className="h-8 w-full rounded border border-transparent bg-transparent px-2 text-[var(--nodiary-muted)] outline-none hover:border-[var(--nodiary-border-strong)] focus:border-[var(--nodiary-accent)] focus:bg-[var(--nodiary-panel)]"
                   onChange={(event) =>
                     onMoveRow(blockId, row.id, {
                       owner: event.target.value
@@ -1752,10 +2060,10 @@ function DatabaseTable({
                   value={row.owner}
                 />
               </td>
-              <td className="border-b border-[#eeeae3] px-3 py-2">
+              <td className="border-b border-[var(--nodiary-border-subtle)] px-3 py-2">
                 <input
                   aria-label={`DB 행 날짜: ${row.title}`}
-                  className="h-8 w-full rounded border border-transparent bg-transparent px-2 text-[#6f6a61] outline-none hover:border-[#dedad1] focus:border-[var(--nodiary-accent)] focus:bg-white"
+                  className="h-8 w-full rounded border border-transparent bg-transparent px-2 text-[var(--nodiary-muted)] outline-none hover:border-[var(--nodiary-border-strong)] focus:border-[var(--nodiary-accent)] focus:bg-[var(--nodiary-panel)]"
                   onChange={(event) =>
                     onMoveRow(blockId, row.id, {
                       date: event.target.value
@@ -1789,7 +2097,7 @@ function EditableDatabaseCard({
   return (
     <article
       aria-label={`DB 행 드래그: ${row.title}`}
-      className="rounded border border-[#dedad1] bg-white p-3"
+      className="rounded border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] p-3"
       draggable
       onDragStart={(event) => {
         event.dataTransfer.setData("text/nodiary-db-row", row.id);
@@ -1798,7 +2106,7 @@ function EditableDatabaseCard({
     >
       <input
         aria-label={`모바일 DB 행 제목: ${row.title}`}
-        className="h-9 w-full rounded border border-[#dedad1] px-2 text-[13px] font-medium text-[#24211d] outline-none focus:border-[var(--nodiary-accent)]"
+        className="h-9 w-full rounded border border-[var(--nodiary-border-strong)] px-2 text-[13px] font-medium text-[var(--nodiary-text)] outline-none focus:border-[var(--nodiary-accent)]"
         onChange={(event) =>
           onMoveRow(blockId, row.id, {
             title: event.target.value
@@ -1809,7 +2117,7 @@ function EditableDatabaseCard({
       <div className="mt-2 grid grid-cols-2 gap-2">
         <select
           aria-label={`모바일 DB 행 상태: ${row.title}`}
-          className="h-9 rounded border border-[#dedad1] bg-white px-2 text-[12px] text-[#6f6a61] outline-none focus:border-[var(--nodiary-accent)]"
+          className="h-9 rounded border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-2 text-[12px] text-[var(--nodiary-muted)] outline-none focus:border-[var(--nodiary-accent)]"
           onChange={(event) =>
             onMoveRow(blockId, row.id, {
               status: event.target.value as DatabaseRow["status"]
@@ -1825,7 +2133,7 @@ function EditableDatabaseCard({
         </select>
         <input
           aria-label={`모바일 DB 행 날짜: ${row.title}`}
-          className="h-9 rounded border border-[#dedad1] px-2 text-[12px] text-[#6f6a61] outline-none focus:border-[var(--nodiary-accent)]"
+          className="h-9 rounded border border-[var(--nodiary-border-strong)] px-2 text-[12px] text-[var(--nodiary-muted)] outline-none focus:border-[var(--nodiary-accent)]"
           onChange={(event) =>
             onMoveRow(blockId, row.id, {
               date: event.target.value
@@ -1837,7 +2145,7 @@ function EditableDatabaseCard({
       </div>
       <input
         aria-label={`모바일 DB 행 담당: ${row.title}`}
-        className="mt-2 h-9 w-full rounded border border-[#dedad1] px-2 text-[12px] text-[#6f6a61] outline-none focus:border-[var(--nodiary-accent)]"
+        className="mt-2 h-9 w-full rounded border border-[var(--nodiary-border-strong)] px-2 text-[12px] text-[var(--nodiary-muted)] outline-none focus:border-[var(--nodiary-accent)]"
         onChange={(event) =>
           onMoveRow(blockId, row.id, {
             owner: event.target.value
@@ -1876,7 +2184,7 @@ function DatabaseBoard({
       {groups.map((group) => (
         <section
           aria-label={`DB 상태 드롭: ${databaseStatusLabel[group.status]}`}
-          className="min-h-28 rounded border border-[#eeeae3] bg-[#fbfaf7] p-2"
+          className="min-h-28 rounded border border-[var(--nodiary-border-subtle)] bg-[var(--nodiary-panel-muted)] p-2"
           key={group.status}
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) => {
@@ -1893,7 +2201,7 @@ function DatabaseBoard({
             }
           }}
         >
-          <div className="mb-2 flex items-center gap-2 text-[12px] font-semibold text-[#6f6a61]">
+          <div className="mb-2 flex items-center gap-2 text-[12px] font-semibold text-[var(--nodiary-muted)]">
             <Circle className="h-3 w-3" aria-hidden="true" />
             {databaseStatusLabel[group.status]}
           </div>
@@ -1901,16 +2209,34 @@ function DatabaseBoard({
             {group.rows.map((row) => (
               <article
                 aria-label={`DB 행 드래그: ${row.title}`}
-                className="rounded border border-[#dedad1] bg-white px-2 py-2 text-[12px] shadow-[0_1px_1px_rgba(36,33,29,0.04)]"
+                aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
+                className="rounded border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-2 py-2 text-[12px] shadow-[0_1px_1px_rgba(36,33,29,0.04)]"
                 draggable
                 key={row.id}
+                onKeyDown={(event) => {
+                  if (!event.altKey) {
+                    return;
+                  }
+
+                  if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                    event.preventDefault();
+                    onMoveRow(blockId, row.id, {
+                      status: getAdjacentDatabaseStatus(
+                        row.status,
+                        event.key === "ArrowRight" ? 1 : -1
+                      ),
+                      index: 0
+                    });
+                  }
+                }}
                 onDragStart={(event) => {
                   event.dataTransfer.setData("text/nodiary-db-row", row.id);
                   event.dataTransfer.setData("text/plain", row.id);
                 }}
+                tabIndex={0}
               >
-                <div className="font-medium text-[#24211d]">{row.title}</div>
-                <div className="mt-2 text-[#8c867c]">{row.date}</div>
+                <div className="font-medium text-[var(--nodiary-text)]">{row.title}</div>
+                <div className="mt-2 text-[var(--nodiary-muted-soft)]">{row.date}</div>
               </article>
             ))}
           </div>
@@ -1923,7 +2249,8 @@ function DatabaseBoard({
 function DatabaseCalendar({
   blockId,
   database,
-  onMoveRow
+  onMoveRow,
+  rows
 }: {
   blockId: string;
   database: DatabaseBlock;
@@ -1932,12 +2259,13 @@ function DatabaseCalendar({
     rowId: string,
     patch: Parameters<typeof moveDatabaseRow>[3]
   ) => void;
+  rows: DatabaseRow[];
 }) {
-  const days = useMemo(() => createDatabaseCalendarDays(database.rows), [database.rows]);
+  const days = useMemo(() => createDatabaseCalendarDays(rows), [rows]);
 
   return (
     <div className="p-3">
-      <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-[#8c867c]">
+      <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-[var(--nodiary-muted-soft)]">
         {["월", "화", "수", "목", "금", "토", "일"].map((day) => (
           <div className="h-6 leading-6" key={day}>
             {day}
@@ -1953,8 +2281,8 @@ function DatabaseCalendar({
           <div
             aria-label={day.isoDate}
             className={cn(
-              "min-h-[86px] rounded border border-[#eeeae3] bg-[#fbfaf7] p-1.5",
-              day.isCurrentMonth ? "text-[#24211d]" : "text-[#aaa399]",
+              "min-h-[86px] rounded border border-[var(--nodiary-border-subtle)] bg-[var(--nodiary-panel-muted)] p-1.5",
+              day.isCurrentMonth ? "text-[var(--nodiary-text)]" : "text-[var(--nodiary-icon-muted)]",
               day.isToday && "border-[var(--nodiary-accent)] bg-[var(--nodiary-accent-soft)]"
             )}
             key={day.isoDate}
@@ -1978,9 +2306,32 @@ function DatabaseCalendar({
               {day.rows.map((row) => (
                 <button
                   aria-label={`DB 행 드래그: ${row.title}`}
-                  className="block w-full truncate rounded bg-white px-1.5 py-1 text-left text-[11px] font-medium text-[#3a3630] shadow-[0_1px_1px_rgba(36,33,29,0.04)] hover:bg-[#f7f5f0]"
+                  aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                  className="block w-full truncate rounded bg-[var(--nodiary-panel)] px-1.5 py-1 text-left text-[11px] font-medium text-[var(--nodiary-text-strong)] shadow-[0_1px_1px_rgba(36,33,29,0.04)] hover:bg-[var(--nodiary-hover)]"
                   draggable
                   key={row.id}
+                  onKeyDown={(event) => {
+                    if (!event.altKey) {
+                      return;
+                    }
+
+                    const deltaByKey: Record<string, number> = {
+                      ArrowLeft: -1,
+                      ArrowRight: 1,
+                      ArrowUp: -7,
+                      ArrowDown: 7
+                    };
+                    const delta = deltaByKey[event.key];
+
+                    if (delta === undefined) {
+                      return;
+                    }
+
+                    event.preventDefault();
+                    onMoveRow(blockId, row.id, {
+                      date: shiftIsoDateByDays(row.date, delta)
+                    });
+                  }}
                   onDragStart={(event) => {
                     event.dataTransfer.setData("text/nodiary-db-row", row.id);
                     event.dataTransfer.setData("text/plain", row.id);
@@ -2036,6 +2387,39 @@ function createDatabaseCalendarDays(rows: DatabaseRow[]) {
   return days;
 }
 
+function shiftIsoDateByDays(isoDate: string, delta: number) {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + delta));
+
+  return [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, "0"),
+    String(date.getUTCDate()).padStart(2, "0")
+  ].join("-");
+}
+
+function getAdjacentDatabaseStatus(
+  status: DatabaseRow["status"],
+  delta: -1 | 1
+): DatabaseRow["status"] {
+  const statuses: DatabaseRow["status"][] = ["backlog", "doing", "review", "done"];
+  const index = statuses.indexOf(status);
+  const nextIndex = Math.max(0, Math.min(statuses.length - 1, index + delta));
+
+  return statuses[nextIndex] ?? status;
+}
+
+function getStableDatabaseFieldLabel(field: DatabaseField) {
+  const labels: Record<string, string> = {
+    title: "작업",
+    status: "상태",
+    owner: "담당",
+    date: "날짜"
+  };
+
+  return labels[field.id] ?? field.name;
+}
+
 function AiOperatorPanel({
   className,
   aiInput,
@@ -2070,12 +2454,12 @@ function AiOperatorPanel({
   return (
     <aside
       className={cn(
-        "shrink-0 border-l border-[#e4e0d8] bg-[#fbfaf7] px-3 py-3",
+        "shrink-0 border-l border-[var(--nodiary-border)] bg-[var(--nodiary-panel-muted)] px-3 py-3",
         className
       )}
     >
       <div className="flex h-9 items-center justify-between px-1">
-        <div className="flex items-center gap-2 text-[14px] font-semibold text-[#24211d]">
+        <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--nodiary-text)]">
           <Bot className="h-4 w-4 text-[var(--nodiary-accent)]" aria-hidden="true" />
           AI 글쓰기
         </div>
@@ -2085,7 +2469,7 @@ function AiOperatorPanel({
           </span>
           <button
             aria-label="AI 패널 닫기"
-            className="flex h-8 w-8 items-center justify-center rounded hover:bg-[#f4f2ee]"
+            className="flex h-8 w-8 items-center justify-center rounded hover:bg-[var(--nodiary-soft)]"
             onClick={onClose}
             type="button"
           >
@@ -2095,13 +2479,13 @@ function AiOperatorPanel({
       </div>
       <textarea
         aria-label="AI 명령 입력"
-        className="mt-3 h-[184px] w-full resize-none rounded-md border border-[#dedad1] bg-white px-3 py-3 text-[13px] leading-6 text-[#24211d] outline-none placeholder:text-[#9a948a]"
+        className="mt-3 h-[184px] w-full resize-none rounded-md border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-3 py-3 text-[13px] leading-6 text-[var(--nodiary-text)] outline-none placeholder:text-[var(--nodiary-placeholder)]"
         onChange={(event) => onChangeAiInput(event.target.value)}
         placeholder="예: 이 페이지를 더 날카로운 실행 계획으로 다듬어줘. 캘린더 충돌은 승인 큐에 올려."
         value={aiInput}
       />
       {notice ? (
-        <div className="mt-2 rounded-md border border-[#f0d6b8] bg-[#fff8ee] px-3 py-2 text-[12px] leading-5 text-[#8a5a23]">
+        <div className="mt-2 rounded-md border border-[var(--nodiary-warning-border)] bg-[var(--nodiary-warning-bg)] px-3 py-2 text-[12px] leading-5 text-[var(--nodiary-warning-text)]">
           {notice}
         </div>
       ) : null}
@@ -2117,7 +2501,7 @@ function AiOperatorPanel({
               "rounded border px-2 py-1 text-[11px]",
               isEnabled
                 ? "border-[var(--nodiary-accent)] bg-[var(--nodiary-accent-soft)] font-medium text-[var(--nodiary-accent)]"
-                : "border-[#dedad1] bg-white text-[#6f6a61] hover:bg-[#f7f5f0]"
+                : "border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] text-[var(--nodiary-muted)] hover:bg-[var(--nodiary-hover)]"
             )}
             key={scope.id}
             onClick={() => onToggleScope(scope.id)}
@@ -2136,11 +2520,11 @@ function AiOperatorPanel({
         AI에게 보내기
       </button>
 
-      <section className="mt-4 rounded-md border border-[#dedad1] bg-white px-3 py-3">
+      <section className="mt-4 rounded-md border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-3 py-3">
         <div className="flex items-center justify-between">
-          <div className="text-[13px] font-semibold text-[#24211d]">승인 대기</div>
+          <div className="text-[13px] font-semibold text-[var(--nodiary-text)]">승인 대기</div>
           <button
-            className="flex h-7 items-center gap-1 rounded px-2 text-[12px] text-[#6f6a61] hover:bg-[#f7f5f0]"
+            className="flex h-7 items-center gap-1 rounded px-2 text-[12px] text-[var(--nodiary-muted)] hover:bg-[var(--nodiary-hover)]"
             disabled={aiState.undoLog.length === 0}
             onClick={onUndo}
             type="button"
@@ -2151,38 +2535,38 @@ function AiOperatorPanel({
         </div>
         <div className="mt-3 space-y-3">
           {pendingActions.length === 0 ? (
-            <div className="rounded border border-dashed border-[#dedad1] px-3 py-4 text-[12px] leading-5 text-[#8c867c]">
+            <div className="rounded border border-dashed border-[var(--nodiary-border-strong)] px-3 py-4 text-[12px] leading-5 text-[var(--nodiary-muted-soft)]">
               AI가 바로 바꾸지 않고, 문서 변경안과 일정 변경안을 승인 큐로 올립니다.
             </div>
           ) : null}
           {pendingActions.map((action) => (
-            <article className="rounded border border-[#dedad1] p-3" key={action.id}>
+            <article className="rounded border border-[var(--nodiary-border-strong)] p-3" key={action.id}>
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <div className="text-[12px] font-semibold text-[var(--nodiary-accent)]">
                     {getOperatorToolLabel(action.toolName)}
                   </div>
-                  <div className="mt-1 text-[13px] font-medium text-[#24211d]">
+                  <div className="mt-1 text-[13px] font-medium text-[var(--nodiary-text)]">
                     {action.summary}
                   </div>
                 </div>
-                <span className="rounded bg-[#f4f2ee] px-2 py-1 text-[11px] text-[#6f6a61]">
+                <span className="rounded bg-[var(--nodiary-soft)] px-2 py-1 text-[11px] text-[var(--nodiary-muted)]">
                   {getRiskLabel(action.riskLevel)}
                 </span>
               </div>
-              <div className="mt-3 rounded bg-[#fbfaf7] px-2 py-2 font-mono text-[12px] leading-5 text-[#3a3630]">
+              <div className="mt-3 rounded bg-[var(--nodiary-panel-muted)] px-2 py-2 font-mono text-[12px] leading-5 text-[var(--nodiary-text-strong)]">
                 {action.diff.split("\n").map((line) => (
                   <div key={line}>{line}</div>
                 ))}
               </div>
               <div className="mt-3 flex items-center justify-between">
-                <span className="text-[12px] text-[#8c867c]">
+                <span className="text-[12px] text-[var(--nodiary-muted-soft)]">
                   {getApprovalStatusLabel(action.approvalStatus)}
                 </span>
                 {action.approvalStatus === "pending" ? (
                   <div className="flex gap-2">
                     <button
-                      className="h-8 rounded border border-[#dedad1] px-3 text-[12px] text-[#6f6a61] hover:bg-[#f7f5f0]"
+                      className="h-8 rounded border border-[var(--nodiary-border-strong)] px-3 text-[12px] text-[var(--nodiary-muted)] hover:bg-[var(--nodiary-hover)]"
                       onClick={() => onReject(action.id)}
                       type="button"
                     >
@@ -2203,11 +2587,11 @@ function AiOperatorPanel({
         </div>
       </section>
 
-      <section className="mt-3 rounded-md border border-[#dedad1] bg-white px-3 py-3">
-        <div className="text-[13px] font-semibold text-[#24211d]">장기 메모리</div>
+      <section className="mt-3 rounded-md border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-3 py-3">
+        <div className="text-[13px] font-semibold text-[var(--nodiary-text)]">장기 메모리</div>
         <div className="mt-2 space-y-2">
           {aiState.memories.map((memory) => (
-            <div className="rounded bg-[#fbfaf7] px-2 py-2 text-[12px] leading-5 text-[#6f6a61]" key={memory.id}>
+            <div className="rounded bg-[var(--nodiary-panel-muted)] px-2 py-2 text-[12px] leading-5 text-[var(--nodiary-muted)]" key={memory.id}>
               {memory.content}
             </div>
           ))}
@@ -2226,27 +2610,34 @@ function SettingsDialog({
   onClose: () => void;
   onUpdate: (patch: Partial<typeof preferences>) => void;
 }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useModalFocusTrap(dialogRef, closeButtonRef, onClose);
+
   return (
     <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/20 px-4 py-4 sm:items-center">
       <section
         aria-label="개인화 설정"
         aria-modal="true"
-        className="max-h-[calc(100vh-32px)] w-full max-w-xl overflow-y-auto rounded-md border border-[#dedad1] bg-white p-4 shadow-[0_20px_60px_rgba(36,33,29,0.18)] sm:p-5"
+        className="max-h-[calc(100vh-32px)] w-full max-w-xl overflow-y-auto rounded-md border border-[var(--nodiary-border)] bg-[var(--nodiary-panel)] p-4 shadow-[0_20px_60px_rgba(36,33,29,0.18)] sm:p-5"
+        ref={dialogRef}
         role="dialog"
       >
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-[18px] font-semibold text-[#24211d]">
+            <div className="text-[18px] font-semibold text-[var(--nodiary-text)]">
               개인화 설정
             </div>
-            <div className="mt-1 text-[13px] text-[#6f6a61]">
+            <div className="mt-1 text-[13px] text-[var(--nodiary-muted)]">
               Notion에 가까운 기본값에서 밀도와 AI 패널을 조정합니다.
             </div>
           </div>
           <button
             aria-label="설정 닫기"
-            className="flex h-8 w-8 items-center justify-center rounded hover:bg-[#f4f2ee]"
+            className="flex h-8 w-8 items-center justify-center rounded hover:bg-[var(--nodiary-soft)]"
             onClick={onClose}
+            ref={closeButtonRef}
             type="button"
           >
             <X className="h-4 w-4" aria-hidden="true" />
@@ -2346,7 +2737,7 @@ function SettingsDialog({
           </SettingGroup>
         </div>
 
-        <div className="mt-5 rounded bg-[#fbfaf7] px-3 py-3 font-mono text-[12px] leading-5 text-[#6f6a61]">
+        <div className="mt-5 rounded bg-[var(--nodiary-panel-muted)] px-3 py-3 font-mono text-[12px] leading-5 text-[var(--nodiary-muted)]">
           <div>density: {preferences.density}</div>
           <div>right panel: {preferences.rightAiPanel}</div>
           <div>document width: {preferences.documentWidth}</div>
@@ -2355,6 +2746,88 @@ function SettingsDialog({
       </section>
     </div>
   );
+}
+
+function useModalFocusTrap(
+  containerRef: RefObject<HTMLElement | null>,
+  initialFocusRef: RefObject<HTMLElement | null>,
+  onEscape: () => void
+) {
+  const onEscapeRef = useRef(onEscape);
+
+  useEffect(() => {
+    onEscapeRef.current = onEscape;
+  }, [onEscape]);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const previousFocus = document.activeElement;
+
+    if (!container) {
+      return undefined;
+    }
+
+    const modalContainer = container;
+
+    const focusableSelector = [
+      "button:not([disabled])",
+      "input:not([disabled])",
+      "select:not([disabled])",
+      "textarea:not([disabled])",
+      "[href]",
+      '[tabindex]:not([tabindex="-1"])'
+    ].join(",");
+
+    function getFocusableElements() {
+      return Array.from(
+        modalContainer.querySelectorAll<HTMLElement>(focusableSelector)
+      ).filter((element) => !element.hasAttribute("disabled"));
+    }
+
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onEscapeRef.current();
+        return;
+      }
+
+      if (event.key !== "Tab") {
+        return;
+      }
+
+      const focusableElements = getFocusableElements();
+
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        modalContainer.focus();
+        return;
+      }
+
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+
+      if (event.shiftKey && document.activeElement === firstElement) {
+        event.preventDefault();
+        lastElement.focus();
+      }
+
+      if (!event.shiftKey && document.activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
+      }
+    }
+
+    (initialFocusRef.current ?? getFocusableElements()[0] ?? container).focus();
+    modalContainer.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      modalContainer.removeEventListener("keydown", handleKeyDown);
+
+      if (previousFocus instanceof HTMLElement) {
+        previousFocus.focus();
+      }
+    };
+  }, [containerRef, initialFocusRef]);
 }
 
 function CommandPalette({
@@ -2373,20 +2846,20 @@ function CommandPalette({
       <section
         aria-label="검색과 명령"
         aria-modal="true"
-        className="w-full max-w-lg rounded-md border border-[#dedad1] bg-white p-3 shadow-[0_20px_60px_rgba(36,33,29,0.18)]"
+        className="w-full max-w-lg rounded-md border border-[var(--nodiary-border)] bg-[var(--nodiary-panel)] p-3 shadow-[0_20px_60px_rgba(36,33,29,0.18)]"
         role="dialog"
       >
-        <div className="flex items-center gap-2 rounded border border-[#dedad1] px-3">
-          <Search className="h-4 w-4 text-[#8c867c]" aria-hidden="true" />
+        <div className="flex items-center gap-2 rounded border border-[var(--nodiary-border-strong)] px-3">
+          <Search className="h-4 w-4 text-[var(--nodiary-muted-soft)]" aria-hidden="true" />
           <input
             aria-label="검색어 입력"
             autoFocus
-            className="h-10 min-w-0 flex-1 bg-transparent text-[14px] outline-none placeholder:text-[#9a948a]"
+            className="h-10 min-w-0 flex-1 bg-transparent text-[14px] outline-none placeholder:text-[var(--nodiary-placeholder)]"
             placeholder="페이지, 캡처, AI 명령 검색"
           />
           <button
             aria-label="검색 닫기"
-            className="flex h-8 w-8 items-center justify-center rounded hover:bg-[#f4f2ee]"
+            className="flex h-8 w-8 items-center justify-center rounded hover:bg-[var(--nodiary-soft)]"
             onClick={onClose}
             type="button"
           >
@@ -2414,11 +2887,11 @@ function CommandPaletteRow({
 }) {
   return (
     <button
-      className="flex h-10 w-full items-center gap-3 rounded px-2 text-left text-[13px] text-[#3a3630] hover:bg-[#f7f5f0]"
+      className="flex h-10 w-full items-center gap-3 rounded px-2 text-left text-[13px] text-[var(--nodiary-text-strong)] hover:bg-[var(--nodiary-hover)]"
       onClick={onClick}
       type="button"
     >
-      <span className="flex h-7 w-7 items-center justify-center rounded border border-[#dedad1] text-[#6f6a61]">
+      <span className="flex h-7 w-7 items-center justify-center rounded border border-[var(--nodiary-border-strong)] text-[var(--nodiary-muted)]">
         <Icon className="h-4 w-4" aria-hidden="true" />
       </span>
       {label}
@@ -2435,7 +2908,7 @@ function SettingGroup({
 }) {
   return (
     <div>
-      <div className="mb-2 text-[12px] font-semibold text-[#6f6a61]">{label}</div>
+      <div className="mb-2 text-[12px] font-semibold text-[var(--nodiary-muted)]">{label}</div>
       <div className="flex flex-wrap gap-2">{children}</div>
     </div>
   );
@@ -2446,17 +2919,44 @@ function settingButtonClass(isActive: boolean) {
     "h-8 rounded border px-3 text-[12px]",
     isActive
       ? "border-[var(--nodiary-accent)] bg-[var(--nodiary-accent-soft)] font-medium text-[var(--nodiary-accent)]"
-      : "border-[#dedad1] bg-white text-[#6f6a61] hover:bg-[#f7f5f0]"
+      : "border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] text-[var(--nodiary-muted)] hover:bg-[var(--nodiary-hover)]"
   );
 }
 
-function getWorkspaceThemeStyle(accent: NodiaryState["preferences"]["accent"]) {
+function getWorkspaceThemeStyle(
+  accent: NodiaryState["preferences"]["accent"],
+  theme: NodiaryState["preferences"]["theme"]
+) {
   const tokens = accentTokens[accent];
+  const isDark = theme === "dark";
 
   return {
     "--nodiary-accent": tokens.accent,
     "--nodiary-accent-hover": tokens.accentHover,
-    "--nodiary-accent-soft": tokens.accentSoft
+    "--nodiary-accent-soft": tokens.accentSoft,
+    "--nodiary-app-bg": isDark ? "#1f1d1a" : "#fbfaf7",
+    "--nodiary-canvas": isDark ? "#211f1c" : "#ffffff",
+    "--nodiary-panel": isDark ? "#2a2723" : "#ffffff",
+    "--nodiary-panel-muted": isDark ? "#26231f" : "#fbfaf7",
+    "--nodiary-sidebar": isDark ? "#26231f" : "#f4f2ee",
+    "--nodiary-border": isDark ? "#3a352e" : "#e4e0d8",
+    "--nodiary-border-strong": isDark ? "#4a433a" : "#dedad1",
+    "--nodiary-border-subtle": isDark ? "#343029" : "#eeeae3",
+    "--nodiary-text": isDark ? "#f4f1ea" : "#24211d",
+    "--nodiary-text-strong": isDark ? "#f7f1e8" : "#3a3630",
+    "--nodiary-muted": isDark ? "#b8afa2" : "#6f6a61",
+    "--nodiary-muted-strong": isDark ? "#d2c7b8" : "#7c766d",
+    "--nodiary-muted-soft": isDark ? "#a99f91" : "#8c867c",
+    "--nodiary-placeholder": isDark ? "#80776b" : "#9a948a",
+    "--nodiary-icon-muted": isDark ? "#958b7d" : "#aaa399",
+    "--nodiary-icon-faint": isDark ? "#756c60" : "#c0bab0",
+    "--nodiary-hover": isDark ? "#34302a" : "#f7f5f0",
+    "--nodiary-soft": isDark ? "#302c26" : "#f4f2ee",
+    "--nodiary-selected": isDark ? "#3a352e" : "#ebe7df",
+    "--nodiary-warning-bg": isDark ? "#3f3122" : "#fff8ee",
+    "--nodiary-warning-border": isDark ? "#5f452a" : "#f0d6b8",
+    "--nodiary-warning-text": isDark ? "#f1bd80" : "#8a5a23",
+    colorScheme: isDark ? "dark" : "light"
   } as CSSProperties;
 }
 
@@ -2674,11 +3174,14 @@ function escapeHtml(value: string) {
     .replaceAll('"', "&quot;");
 }
 
-function shouldCloseInitialAiPanelOnSmallScreen(
+function shouldOpenAiPanelFromStoredPreference(
   panelPreference: "open" | "closed"
 ) {
+  return panelPreference === "open" && !isNarrowViewport();
+}
+
+function isNarrowViewport() {
   return (
-    panelPreference === "open" &&
     typeof window !== "undefined" &&
     typeof window.matchMedia === "function" &&
     !window.matchMedia("(min-width: 1280px)").matches
