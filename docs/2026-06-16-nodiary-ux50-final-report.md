@@ -59,6 +59,14 @@
 - Todo block은 체크 토글 버튼과 텍스트 input을 분리했다. 텍스트를 클릭해 편집해도 완료 상태가 바뀌지 않고, 편집 중에는 취소선이 적용되지 않는다.
 - AI approval diff 렌더링에서 반복 JSON line이 React duplicate key 경고를 만들지 않도록 line index 기반 key로 변경했다.
 
+## 2026-06-16 Approval/Page Tree/AI Panel 핫픽스
+
+- 승인된 AI action은 더 이상 `승인 대기` 큐에 남지 않고, pending action만 승인 큐에 렌더링한다.
+- OpenAI `createCalendarEvent` action 승인 시 sidebar calendar에 새 Nodiary 일정을 즉시 추가하고, undo는 승인 전 calendar snapshot으로 복원한다.
+- Page tree row는 자식 유무와 관계없이 chevron slot과 drag slot을 항상 렌더링해 같은 depth의 제목 축이 어긋나지 않게 했다.
+- Electron titlebar 회피는 Nodiary 로고를 오른쪽으로 밀지 않고, sidebar 상단 safe area를 둬 macOS traffic light 아래에 브랜드가 놓이게 바꿨다.
+- 오른쪽 AI operator panel은 `overflow-y-auto` scroll container로 바꿔 짧은 창에서도 승인 카드 하단을 스크롤로 볼 수 있게 했다.
+
 ## UX50 리스트와 처리 상태
 
 | # | 출처 | 발견 내용 | 처리 |

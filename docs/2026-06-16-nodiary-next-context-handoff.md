@@ -20,6 +20,14 @@
 - Todo block은 checkbox button과 text input을 분리했고, 텍스트 편집 중에는 완료 상태의 취소선이 보이지 않게 했다.
 - AI approval diff의 반복 JSON line 렌더링에서 duplicate React key warning을 제거했다.
 
+## 최신 핫픽스 2
+
+- AI approval UI는 이제 pending action만 `승인 대기`에 보여준다. 승인한 action은 즉시 실행되고 큐에서 빠진다.
+- OpenAI `createCalendarEvent` action을 실제 sidebar calendar event 생성으로 연결했다. 승인하면 선택 날짜가 새 일정 날짜로 이동하고, undo는 이전 calendar snapshot으로 되돌린다.
+- Page tree는 chevron slot과 drag slot을 모든 row에 고정 렌더링해 자식이 있는 page와 없는 page의 제목 시작 축이 같게 유지된다.
+- Electron sidebar titlebar safe area는 수평 padding이 아니라 상단 padding으로 적용한다. Nodiary 로고가 macOS traffic light 오른쪽으로 밀리지 않고 버튼 아래에 놓인다.
+- AI operator panel은 `overflow-y-auto` scroll container가 되어 낮은 window height에서도 승인 카드 하단을 볼 수 있다.
+
 ## 이번 추가 패스에서 고친 것
 
 - Workspace API validation을 `pageTree`, 전체 `pages`, nested database field/filter/sort/row schema까지 확장.
@@ -77,7 +85,7 @@
 
 ## 검증 완료
 
-- `npm test`: 13 files, 79 tests passed.
+- `npm test`: 13 files, 83 tests passed.
 - `npm run typecheck`: passed.
 - `npm run lint`: passed.
 - `npm run build`: passed.
@@ -100,6 +108,9 @@
   - Todo text edit does not toggle completion and does not show line-through while focused.
   - Electron titlebar background is `#F4F2EE`, and the traffic lights no longer overlap the Nodiary logo.
   - Electron console errors/warnings: 0.
+  - Approved `createCalendarEvent` proposal disappears from pending queue and immediately appears in the sidebar calendar.
+  - Page tree same-depth title left delta: `0`.
+  - Short AI panel state: `overflow-y=auto`, `scrollHeight > clientHeight`.
 
 ## QA 증거 파일
 
@@ -122,6 +133,10 @@
 - Latest hotfix QA artifacts outside the repo:
   - `/tmp/nodiary-fix-qa/electron-final-verified.png`
   - `/tmp/nodiary-fix-qa/electron-native-titlebar-strip-front.png`
+- Latest approval/tree/scroll QA artifacts outside the repo:
+  - `/tmp/nodiary-bugfix-qa/electron-approval-tree-titlebar.png`
+  - `/tmp/nodiary-bugfix-qa/electron-ai-panel-short-scroll.png`
+  - `/tmp/nodiary-bugfix-qa/electron-native-titlebar-vertical-safe-area.png`
 
 ## 아직 남은 이슈
 

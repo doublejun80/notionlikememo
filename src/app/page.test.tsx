@@ -33,14 +33,15 @@ describe("HomePage", () => {
     expect(screen.queryByText("진행 중인 프로젝트")).not.toBeInTheDocument();
   });
 
-  it("reserves sidebar brand space for Electron traffic lights", async () => {
+  it("reserves vertical sidebar titlebar space for Electron traffic lights", async () => {
     vi.stubGlobal("nodiaryDesktop", { sessionToken: "session-secret" });
 
     render(<HomePage />);
 
     await waitFor(() =>
-      expect(screen.getByTestId("nodiary-brand-row")).toHaveClass("pl-[104px]")
+      expect(screen.getByTestId("nodiary-sidebar")).toHaveClass("pt-[52px]")
     );
+    expect(screen.getByTestId("nodiary-brand-row")).not.toHaveClass("pl-[104px]");
   });
 
   it("keeps the complete monthly calendar visible in the left sidebar", () => {
@@ -52,6 +53,23 @@ describe("HomePage", () => {
     expect(dayButtons).toHaveLength(35);
     expect(within(calendar).getByRole("button", { name: "2026-06-16 선택됨" }));
     expect(screen.getByText("제품 기획서 정리")).toBeInTheDocument();
+  });
+
+  it("keeps page tree titles aligned by rendering fixed chevron and drag slots", () => {
+    render(<HomePage />);
+
+    expect(screen.getByTestId("page-tree-chevron-slot-today")).toBeInTheDocument();
+    expect(screen.getByTestId("page-tree-drag-slot-today")).toBeInTheDocument();
+    expect(screen.getByTestId("page-tree-chevron-slot-meetings")).toBeInTheDocument();
+    expect(screen.getByTestId("page-tree-drag-slot-meetings")).toBeInTheDocument();
+    expect(screen.getByTestId("page-tree-title-today")).toHaveAttribute(
+      "data-title-slot",
+      "page-tree-title"
+    );
+    expect(screen.getByTestId("page-tree-title-meetings")).toHaveAttribute(
+      "data-title-slot",
+      "page-tree-title"
+    );
   });
 
   it("opens slash menu and inserts a view-switchable project database block", async () => {
@@ -377,6 +395,65 @@ describe("HomePage", () => {
     expect(getDocumentBlock("메모 본문")).toHaveTextContent("Notion-like의 첫인상");
   });
 
+  it("executes approved OpenAI calendar creation and removes it from the pending queue", async () => {
+    const user = userEvent.setup();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          plan: {
+            summary: "내일 업체 미팅 일정을 추가합니다.",
+            actions: [
+              {
+                toolName: "createCalendarEvent",
+                argsJson: {
+                  title: "업체 미팅",
+                  start: "2026-06-17T14:00:00+09:00",
+                  end: "2026-06-17T15:00:00+09:00"
+                },
+                diffJson: {
+                  change: "create_calendar_event",
+                  humanReadable: "캘린더에 2026-06-17 오후 2:00 업체 미팅을 추가합니다."
+                },
+                riskLevel: "high",
+                undoJson: {
+                  title: "업체 미팅"
+                }
+              }
+            ],
+            memories: []
+          }
+        })
+      }))
+    );
+
+    render(<HomePage />);
+
+    await user.type(
+      await screen.findByLabelText("AI 명령 입력"),
+      "내일 오후 2시에 업체 미팅 추가해줘"
+    );
+    await user.click(screen.getByRole("button", { name: "AI에게 보내기" }));
+    await screen.findByText("일정 추가 제안");
+
+    await user.click(screen.getByRole("button", { name: "승인" }));
+
+    expect(screen.getByText("14:00")).toBeInTheDocument();
+    expect(screen.getByText("업체 미팅")).toBeInTheDocument();
+    expect(screen.queryByText("일정 추가 제안")).not.toBeInTheDocument();
+    expect(screen.queryByText("승인됨")).not.toBeInTheDocument();
+  });
+
+  it("lets the AI operator drawer scroll when the window is short", () => {
+    render(<HomePage />);
+
+    return waitFor(() =>
+      expect(screen.getByTestId("ai-operator-panel")).toHaveClass("overflow-y-auto")
+    );
+  });
+
   it("renders repeated AI diff lines without duplicate React key warnings", async () => {
     const user = userEvent.setup();
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -493,7 +570,8 @@ describe("HomePage", () => {
     await user.click(screen.getByRole("button", { name: "승인" }));
 
     expect(screen.getByText("16:30")).toBeInTheDocument();
-    expect(screen.getByText("높은 위험")).toBeInTheDocument();
+    expect(screen.queryByText("일정 이동 제안")).not.toBeInTheDocument();
+    expect(screen.queryByText("높은 위험")).not.toBeInTheDocument();
   });
 
   it("lets todo text edit independently from completion state", async () => {
@@ -590,7 +668,7 @@ describe("HomePage", () => {
     await user.click(screen.getByRole("button", { name: "승인" }));
 
     expect(screen.getByText("16:30")).toBeInTheDocument();
-    expect(screen.getByText("높은 위험")).toBeInTheDocument();
+    expect(screen.queryByText("높은 위험")).not.toBeInTheDocument();
   });
 
   it("offers keyboard fallbacks for block drag and database row movement", async () => {

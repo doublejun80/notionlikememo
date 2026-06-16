@@ -229,6 +229,55 @@ describe("nodiary model", () => {
     });
   });
 
+  it("executes approved OpenAI calendar creation actions immediately", () => {
+    const state = defaultNodiaryState();
+    const withRun = createAiRunFromOperatorPlan(state, "내일 업체 미팅 추가해줘", {
+      summary: "내일 업체 미팅 일정을 추가합니다.",
+      actions: [
+        {
+          toolName: "createCalendarEvent",
+          argsJson: {
+            title: "업체 미팅",
+            start: "2026-06-17T14:00:00+09:00",
+            end: "2026-06-17T15:00:00+09:00"
+          },
+          diffJson: {
+            change: "create_calendar_event",
+            after: {
+              title: "업체 미팅",
+              start: "2026-06-17T14:00:00+09:00"
+            }
+          },
+          riskLevel: "high",
+          undoJson: {
+            title: "업체 미팅"
+          }
+        }
+      ],
+      memories: []
+    });
+    const action = withRun.ai.runs[0]?.actions[0];
+
+    const approved = approveAiAction(withRun, action.id);
+
+    expect(approved.ai.runs[0]?.status).toBe("completed");
+    expect(approved.sidebarCalendar.selectedDate).toBe("2026-06-17");
+    expect(approved.sidebarCalendar.schedule).toContainEqual(
+      expect.objectContaining({
+        title: "업체 미팅",
+        time: "14:00",
+        source: "nodiary"
+      })
+    );
+
+    const undone = undoLastAiAction(approved);
+
+    expect(undone.sidebarCalendar.selectedDate).toBe("2026-06-16");
+    expect(undone.sidebarCalendar.schedule).not.toContainEqual(
+      expect.objectContaining({ title: "업체 미팅" })
+    );
+  });
+
   it("parses Korean calendar move phrases into approval proposals", () => {
     const withRun = createAiRun(
       defaultNodiaryState(),

@@ -2172,6 +2172,10 @@ function applyOperatorOperation(
     }
   }
 
+  if (operation.toolName === "createCalendarEvent") {
+    return createCalendarEventFromArgs(state, args);
+  }
+
   if (operation.toolName === "createDatabase") {
     const afterBlockId = readStringArg(args, "afterBlockId") ?? "memo";
 
@@ -2200,6 +2204,50 @@ function applyOperatorOperation(
   }
 
   return state;
+}
+
+function createCalendarEventFromArgs(
+  state: NodiaryState,
+  args: Record<string, unknown>
+): NodiaryState {
+  const title =
+    readStringArg(args, "title") ??
+    readStringArg(args, "eventTitle") ??
+    readStringArg(args, "name") ??
+    readStringArg(args, "summary");
+  const start =
+    readStringArg(args, "start") ??
+    readStringArg(args, "startDateTime") ??
+    readStringArg(args, "startsAt");
+  const date =
+    readStringArg(args, "date") ??
+    parseDateFromDateTime(start);
+  const time =
+    readStringArg(args, "time") ??
+    readStringArg(args, "startTime") ??
+    parseTimeFromDateTime(start) ??
+    "09:00";
+
+  if (!title || !date) {
+    return state;
+  }
+
+  const event: CalendarEvent = {
+    id: createCalendarEventId(state.sidebarCalendar, title, date),
+    title,
+    time,
+    date,
+    source: "nodiary"
+  };
+  const movedEvents = state.sidebarCalendar.movedEvents ?? {};
+
+  return {
+    ...state,
+    sidebarCalendar: buildSidebarCalendar(date.slice(0, 7), date, {
+      ...movedEvents,
+      [event.id]: event
+    })
+  };
 }
 
 function updateBlockTextFromArgs(
@@ -2260,6 +2308,41 @@ function readDatabaseStatusArg(
     value === "done"
     ? value
     : undefined;
+}
+
+function parseDateFromDateTime(value: string | undefined): string | undefined {
+  const match = value?.match(/^(\d{4}-\d{2}-\d{2})/);
+
+  return match?.[1];
+}
+
+function parseTimeFromDateTime(value: string | undefined): string | undefined {
+  const match = value?.match(/T(\d{2}:\d{2})/);
+
+  return match?.[1];
+}
+
+function createCalendarEventId(
+  calendar: SidebarCalendar,
+  title: string,
+  date: string
+) {
+  const existingIds = new Set(
+    [
+      ...getCalendarEventsInVisibleRange(calendar),
+      ...getScheduleForDate(date)
+    ].map((event) => event.id)
+  );
+  const slug = slugifyId(`${date}-${title}`);
+  let candidate = `ai-calendar-${slug}`;
+  let index = 2;
+
+  while (existingIds.has(candidate)) {
+    candidate = `ai-calendar-${slug}-${index}`;
+    index += 1;
+  }
+
+  return candidate;
 }
 
 function formatOperatorDiff(diffJson: unknown): string {

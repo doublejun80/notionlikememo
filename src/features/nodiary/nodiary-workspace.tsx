@@ -757,14 +757,13 @@ function NodiarySidebar({
     <aside
       className={cn(
         "w-[320px] shrink-0 flex-col overflow-hidden border-r border-[var(--nodiary-border)] bg-[var(--nodiary-sidebar)] px-3 py-3",
+        isDesktopShell && "pt-[52px]",
         className
       )}
+      data-testid="nodiary-sidebar"
     >
       <div
-        className={cn(
-          "flex h-9 shrink-0 items-center gap-2 px-2",
-          isDesktopShell && "pl-[104px]"
-        )}
+        className="flex h-9 shrink-0 items-center gap-2 px-2"
         data-testid="nodiary-brand-row"
       >
         <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -1031,49 +1030,29 @@ function PageTreeRow({
         )}
         style={{ paddingLeft: 8 + depth * 18 }}
       >
-        <button
-          aria-label={hasChildren ? `페이지 펼치기/접기: ${node.title}` : `페이지 드래그: ${node.title}`}
-          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-          className="flex h-6 w-5 shrink-0 items-center justify-center rounded text-[var(--nodiary-icon-muted)] hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-muted)]"
-          draggable={!hasChildren}
-          onKeyDown={(event) => {
-            if (!event.altKey) {
-              return;
-            }
-
-            if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-              event.preventDefault();
-              onMovePageNodeByKeyboard(
-                node.id,
-                event.key === "ArrowUp" ? "up" : "down"
-              );
-            }
-          }}
-          onDragStart={(event) => {
-            if (hasChildren) {
-              return;
-            }
-            event.dataTransfer.setData("text/nodiary-page", node.id);
-            event.dataTransfer.setData("text/plain", node.id);
-          }}
-          onClick={() => {
-            if (hasChildren) {
-              onTogglePageExpanded(node.id);
-            }
-          }}
-          type="button"
+        <span
+          className="flex h-6 w-5 shrink-0 items-center justify-center"
+          data-testid={`page-tree-chevron-slot-${node.id}`}
         >
           {hasChildren ? (
-            <ChevronIcon className="h-4 w-4" aria-hidden="true" />
-          ) : (
-            <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
-          )}
-        </button>
-        {hasChildren ? (
+            <button
+              aria-label={`페이지 펼치기/접기: ${node.title}`}
+              className="flex h-6 w-5 items-center justify-center rounded text-[var(--nodiary-icon-muted)] hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-muted)]"
+              onClick={() => onTogglePageExpanded(node.id)}
+              type="button"
+            >
+              <ChevronIcon className="h-4 w-4" aria-hidden="true" />
+            </button>
+          ) : null}
+        </span>
+        <span
+          className="flex h-6 w-5 shrink-0 items-center justify-center"
+          data-testid={`page-tree-drag-slot-${node.id}`}
+        >
           <button
             aria-label={`페이지 드래그: ${node.title}`}
             aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-            className="flex h-6 w-5 shrink-0 items-center justify-center rounded text-[var(--nodiary-icon-muted)] hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-muted)]"
+            className="flex h-6 w-5 items-center justify-center rounded text-[var(--nodiary-icon-muted)] hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-muted)]"
             draggable
             onKeyDown={(event) => {
               if (!event.altKey) {
@@ -1096,9 +1075,11 @@ function PageTreeRow({
           >
             <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
-        ) : null}
+        </span>
         <button
           className="min-w-0 flex-1 truncate text-left leading-none"
+          data-testid={`page-tree-title-${node.id}`}
+          data-title-slot="page-tree-title"
           onClick={() => onSelectPage(node.id)}
           type="button"
         >
@@ -2471,15 +2452,18 @@ function AiOperatorPanel({
   onUndo: () => void;
 }) {
   const pendingActions = aiState.runs.flatMap((run) =>
-    run.actions.map((action) => ({ ...action, runCommand: run.command }))
+    run.actions
+      .filter((action) => action.approvalStatus === "pending")
+      .map((action) => ({ ...action, runCommand: run.command }))
   );
 
   return (
     <aside
       className={cn(
-        "shrink-0 border-l border-[var(--nodiary-border)] bg-[var(--nodiary-panel-muted)] px-3 py-3",
+        "flex h-dvh min-h-0 shrink-0 flex-col overflow-y-auto border-l border-[var(--nodiary-border)] bg-[var(--nodiary-panel-muted)] px-3 py-3",
         className
       )}
+      data-testid="ai-operator-panel"
     >
       <div className="flex h-9 items-center justify-between px-1">
         <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--nodiary-text)]">
@@ -3143,6 +3127,7 @@ function getSelectedBlockContext(state: NodiaryState) {
 function getOperatorToolLabel(toolName: string) {
   const labels: Record<string, string> = {
     updateBlock: "문서 블록 변경",
+    createCalendarEvent: "일정 추가 제안",
     updateCalendarEvent: "일정 이동 제안",
     createDatabaseRow: "데이터베이스 행 추가"
   };
