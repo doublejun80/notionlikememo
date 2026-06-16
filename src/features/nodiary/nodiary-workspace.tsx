@@ -20,6 +20,7 @@ import {
   NotebookPen,
   PanelRightClose,
   PanelRightOpen,
+  Pencil,
   Plus,
   Search,
   Settings,
@@ -28,6 +29,7 @@ import {
   Sparkles,
   Table2,
   Text,
+  Trash2,
   Undo2,
   X
 } from "lucide-react";
@@ -53,10 +55,13 @@ import {
   addDatabaseRow,
   approveAiAction,
   changeCalendarMonth,
+  createAiAnswerRun,
   createNewPage,
   createAiRun,
   createAiRunFromOperatorPlan,
   defaultNodiaryState,
+  deleteBlock,
+  deletePage,
   getDatabaseRowsForView,
   insertBlockFromSlash,
   insertParagraphBlock,
@@ -66,6 +71,7 @@ import {
   movePageNode,
   movePageNodeByKeyboard,
   rejectAiAction,
+  renamePage,
   requestCalendarEventMove,
   selectCalendarDate,
   selectPage,
@@ -80,6 +86,7 @@ import {
   updatePageTitle,
   updatePreference,
   updateTodoBlock,
+  type AiModelRoute,
   type DatabaseBlock,
   type DatabaseField,
   type DatabaseFilter,
@@ -139,6 +146,32 @@ const aiContextScopes = [
 type AiContextScope = (typeof aiContextScopes)[number]["id"];
 
 const defaultEnabledAiScopes = aiContextScopes.map((scope) => scope.id);
+const defaultOpenAiModelName = "gpt-5.5";
+const aiModelOptions: Array<{
+  id: AiModelRoute;
+  label: string;
+  modelName: string;
+  description: string;
+}> = [
+  {
+    id: "planner",
+    label: "균형 작업",
+    modelName: defaultOpenAiModelName,
+    description: "문서 편집과 승인 제안을 균형 있게 처리"
+  },
+  {
+    id: "quick",
+    label: "빠른 초안",
+    modelName: defaultOpenAiModelName,
+    description: "짧은 질문과 가벼운 정리 요청"
+  },
+  {
+    id: "large-context",
+    label: "긴 문맥",
+    modelName: defaultOpenAiModelName,
+    description: "긴 페이지와 여러 컨텍스트를 함께 검토"
+  }
+];
 
 const accentTokens: Record<
   NodiaryState["preferences"]["accent"],
@@ -183,6 +216,8 @@ export function NodiaryWorkspace() {
   const [isAiPanelOpen, setAiPanelOpen] = useState(false);
   const [aiInput, setAiInput] = useState("");
   const [aiNotice, setAiNotice] = useState("");
+  const [selectedAiModelRoute, setSelectedAiModelRoute] =
+    useState<AiModelRoute>("planner");
   const [quickCapture, setQuickCapture] = useState("");
   const [capturedItems, setCapturedItems] = useState<CapturedItem[]>(() =>
     loadStoredCaptures()
@@ -349,6 +384,20 @@ export function NodiaryWorkspace() {
     });
   }
 
+  function renameExistingPage(pageId: string, title: string) {
+    setState((current) => renamePage(current, pageId, title));
+  }
+
+  function removeExistingPage(pageId: string) {
+    setState((current) => {
+      const next = deletePage(current, pageId);
+
+      setActivePageId(next.activePage.id);
+      setWorkspaceNotice("페이지를 삭제했습니다.");
+      return next;
+    });
+  }
+
   function focusQuickCapture() {
     quickCaptureInputRef.current?.focus();
     setWorkspaceNotice("빠른 메모 입력으로 이동했습니다.");
@@ -393,6 +442,22 @@ export function NodiaryWorkspace() {
 
     setAiInput("");
 
+    if (shouldAnswerDirectly(command)) {
+      const modelOption = getAiModelOption(selectedAiModelRoute);
+
+      setAiNotice("");
+      setState((current) =>
+        createAiAnswerRun(
+          current,
+          command,
+          createLocalAiAnswer(command, selectedAiModelRoute),
+          selectedAiModelRoute,
+          modelOption.modelName
+        )
+      );
+      return;
+    }
+
     try {
       const response = await fetch("/api/ai/operator", {
         method: "POST",
@@ -402,6 +467,7 @@ export function NodiaryWorkspace() {
         },
         body: JSON.stringify({
           command,
+          modelRoute: selectedAiModelRoute,
           pageTitle: enabledAiScopes.includes("currentPage")
             ? state.activePage.title
             : "Nodiary",
@@ -424,18 +490,30 @@ export function NodiaryWorkspace() {
         throw new Error("AI operator route failed");
       }
 
-      const payload = (await response.json()) as { plan?: OperatorPlanDraft };
+      const payload = (await response.json()) as {
+        model?: string;
+        modelRoute?: AiModelRoute;
+        plan?: OperatorPlanDraft;
+      };
 
       if (!payload.plan) {
         throw new Error("AI operator route returned no plan");
       }
 
       setState((current) =>
-        createAiRunFromOperatorPlan(current, command, payload.plan as OperatorPlanDraft)
+        createAiRunFromOperatorPlan(
+          current,
+          command,
+          payload.plan as OperatorPlanDraft,
+          payload.modelRoute ?? selectedAiModelRoute,
+          payload.model ?? getAiModelOption(selectedAiModelRoute).modelName
+        )
       );
     } catch {
       setAiNotice("OpenAI 연결에 실패해 로컬 초안으로 승인 큐를 만들었습니다.");
-      setState((current) => createAiRun(current, command));
+      setState((current) =>
+        createAiRun(current, command, selectedAiModelRoute, "로컬 초안")
+      );
     }
   }
 
@@ -476,12 +554,14 @@ export function NodiaryWorkspace() {
         capturedItems={capturedItems}
         isDesktopShell={isDesktopShell}
         onCreatePage={createPage}
+        onDeletePage={removeExistingPage}
         onFocusQuickCapture={focusQuickCapture}
         onOpenAi={() => setAiPanelOpen(true)}
         onOpenInbox={openInbox}
         onOpenSearch={openSearch}
         onOpenSettings={() => setSettingsOpen(true)}
         onQuickCapture={(value) => setQuickCapture(value)}
+        onRenamePage={renameExistingPage}
         onSelectPage={openPage}
         onTogglePageExpanded={(nodeId) =>
           setState((current) => togglePageNodeExpanded(current, nodeId))
@@ -514,6 +594,9 @@ export function NodiaryWorkspace() {
               setState((current) => addDatabaseRow(current, databaseBlockId))
             }
             onCloseSlash={closeSlash}
+            onDeleteBlock={(blockId) =>
+              setState((current) => deleteBlock(current, blockId))
+            }
             onInsertParagraph={(text) =>
               setState((current) =>
                 insertParagraphBlock(
@@ -591,6 +674,7 @@ export function NodiaryWorkspace() {
               setState((current) => approveAiAction(current, actionId))
             }
             onChangeAiInput={setAiInput}
+            onChangeModelRoute={setSelectedAiModelRoute}
             onReject={(actionId) =>
               setState((current) => rejectAiAction(current, actionId))
             }
@@ -604,6 +688,7 @@ export function NodiaryWorkspace() {
               )
             }
             onUndo={() => setState((current) => undoLastAiAction(current))}
+            selectedModelRoute={selectedAiModelRoute}
           />
         </>
       ) : null}
@@ -643,6 +728,7 @@ export function NodiaryWorkspace() {
             isDesktopShell={isDesktopShell}
             onClose={() => setMobileSidebarOpen(false)}
             onCreatePage={createPage}
+            onDeletePage={removeExistingPage}
             onFocusQuickCapture={focusQuickCapture}
             onOpenAi={() => {
               setAiPanelOpen(true);
@@ -655,6 +741,7 @@ export function NodiaryWorkspace() {
               setMobileSidebarOpen(false);
             }}
             onQuickCapture={(value) => setQuickCapture(value)}
+            onRenamePage={renameExistingPage}
             onSelectPage={(pageId) => {
               openPage(pageId);
               setMobileSidebarOpen(false);
@@ -722,6 +809,7 @@ type SidebarProps = {
   onCalendarMonthChange: (direction: "previous" | "next") => void;
   onClose?: () => void;
   onCreatePage: () => void;
+  onDeletePage: (pageId: string) => void;
   onFocusQuickCapture: () => void;
   onMovePageNode: (nodeId: string, parentNodeId: string, index: number) => void;
   onMovePageNodeByKeyboard: (nodeId: string, direction: "up" | "down") => void;
@@ -730,6 +818,7 @@ type SidebarProps = {
   onOpenSearch: () => void;
   onOpenSettings: () => void;
   onQuickCapture: (value: string) => void;
+  onRenamePage: (pageId: string, title: string) => void;
   onSelectPage: (pageId: string) => void;
   onSubmitQuickCapture: () => void;
   onTogglePageExpanded: (nodeId: string) => void;
@@ -746,6 +835,7 @@ function NodiarySidebar({
   onCalendarMonthChange,
   onClose,
   onCreatePage,
+  onDeletePage,
   onFocusQuickCapture,
   onMovePageNode,
   onMovePageNodeByKeyboard,
@@ -754,6 +844,7 @@ function NodiarySidebar({
   onOpenSearch,
   onOpenSettings,
   onQuickCapture,
+  onRenamePage,
   onSelectPage,
   onSubmitQuickCapture,
   onTogglePageExpanded,
@@ -918,8 +1009,10 @@ function NodiarySidebar({
                 activePageId={activePageId}
                 key={node.id}
                 node={node}
+                onDeletePage={onDeletePage}
                 onMovePageNode={onMovePageNode}
                 onMovePageNodeByKeyboard={onMovePageNodeByKeyboard}
+                onRenamePage={onRenamePage}
                 onSelectPage={onSelectPage}
                 onTogglePageExpanded={onTogglePageExpanded}
               />
@@ -1010,22 +1103,50 @@ function SidebarUtilityRow({
 function PageTreeRow({
   activePageId,
   node,
+  onDeletePage,
   onMovePageNode,
   onMovePageNodeByKeyboard,
+  onRenamePage,
   onSelectPage,
   onTogglePageExpanded,
   depth = 0
 }: {
   activePageId: string;
   node: PageNode;
+  onDeletePage: (pageId: string) => void;
   onMovePageNode: (nodeId: string, parentNodeId: string, index: number) => void;
   onMovePageNodeByKeyboard: (nodeId: string, direction: "up" | "down") => void;
+  onRenamePage: (pageId: string, title: string) => void;
   onSelectPage: (pageId: string) => void;
   onTogglePageExpanded: (nodeId: string) => void;
   depth?: number;
 }) {
   const hasChildren = Boolean(node.children?.length);
   const ChevronIcon = node.expanded ? ChevronDown : ChevronRight;
+  const [isEditing, setEditing] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(node.title);
+  const editInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!isEditing) {
+      return;
+    }
+
+    editInputRef.current?.focus();
+    editInputRef.current?.select();
+  }, [isEditing]);
+
+  function commitTitleEdit() {
+    const nextTitle = draftTitle.trim();
+
+    if (nextTitle && nextTitle !== node.title) {
+      onRenamePage(node.id, nextTitle);
+    } else {
+      setDraftTitle(node.title);
+    }
+
+    setEditing(false);
+  }
 
   return (
     <div
@@ -1044,7 +1165,7 @@ function PageTreeRow({
     >
       <div
         className={cn(
-          "flex h-8 w-full items-center gap-1 rounded-md pr-2 text-left text-[13px] text-[var(--nodiary-muted-strong)] hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-text)]",
+          "group/page-row flex h-8 w-full items-center gap-1 rounded-md pr-1 text-left text-[13px] text-[var(--nodiary-muted-strong)] hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-text)]",
           activePageId === node.id && "bg-[var(--nodiary-selected)] font-medium text-[var(--nodiary-text)]"
         )}
         style={{ paddingLeft: 8 + depth * 18 }}
@@ -1095,15 +1216,59 @@ function PageTreeRow({
             <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
         </span>
-        <button
-          className="min-w-0 flex-1 truncate text-left leading-none"
-          data-testid={`page-tree-title-${node.id}`}
-          data-title-slot="page-tree-title"
-          onClick={() => onSelectPage(node.id)}
-          type="button"
-        >
-          {node.title}
-        </button>
+        {isEditing ? (
+          <input
+            aria-label={`페이지 제목 편집: ${node.title}`}
+            className="min-w-0 flex-1 rounded border border-[var(--nodiary-accent)] bg-[var(--nodiary-panel)] px-1 text-[13px] leading-6 text-[var(--nodiary-text)] outline-none"
+            onBlur={commitTitleEdit}
+            onChange={(event) => setDraftTitle(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commitTitleEdit();
+              }
+
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setDraftTitle(node.title);
+                setEditing(false);
+              }
+            }}
+            ref={editInputRef}
+            value={draftTitle}
+          />
+        ) : (
+          <button
+            className="min-w-0 flex-1 truncate text-left leading-none"
+            data-testid={`page-tree-title-${node.id}`}
+            data-title-slot="page-tree-title"
+            onClick={() => onSelectPage(node.id)}
+            type="button"
+          >
+            {node.title}
+          </button>
+        )}
+        <div className="flex w-[48px] shrink-0 items-center justify-end gap-0.5 opacity-100 md:opacity-0 md:group-focus-within/page-row:opacity-100 md:group-hover/page-row:opacity-100">
+          <button
+            aria-label={`페이지 이름 변경: ${node.title}`}
+            className="flex h-6 w-6 items-center justify-center rounded text-[var(--nodiary-icon-muted)] hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-text)]"
+            onClick={() => {
+              setDraftTitle(node.title);
+              setEditing(true);
+            }}
+            type="button"
+          >
+            <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+          <button
+            aria-label={`페이지 삭제: ${node.title}`}
+            className="flex h-6 w-6 items-center justify-center rounded text-[var(--nodiary-icon-muted)] hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-text)]"
+            onClick={() => onDeletePage(node.id)}
+            type="button"
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        </div>
       </div>
       {node.expanded && node.children
         ? node.children.map((child) => (
@@ -1112,8 +1277,10 @@ function PageTreeRow({
               depth={depth + 1}
               key={child.id}
               node={child}
+              onDeletePage={onDeletePage}
               onMovePageNode={onMovePageNode}
               onMovePageNodeByKeyboard={onMovePageNodeByKeyboard}
+              onRenamePage={onRenamePage}
               onSelectPage={onSelectPage}
               onTogglePageExpanded={onTogglePageExpanded}
             />
@@ -1275,6 +1442,7 @@ function DocumentCanvas({
   isSlashOpen,
   onAddDatabaseRow,
   onCloseSlash,
+  onDeleteBlock,
   onInsertParagraph,
   onMoveBlock,
   onMoveBlockByKeyboard,
@@ -1299,6 +1467,7 @@ function DocumentCanvas({
   pageTitle: string;
   slashOpen: boolean;
   onAddDatabaseRow: (databaseBlockId: string) => void;
+  onDeleteBlock: (blockId: string) => void;
   onMoveBlockByKeyboard: (blockId: string, direction: "up" | "down") => void;
   onMoveBlock: (blockId: string, beforeBlockId: string) => void;
   onMoveDatabaseRow: (
@@ -1356,6 +1525,7 @@ function DocumentCanvas({
             block={block}
             key={block.id}
             onAddDatabaseRow={onAddDatabaseRow}
+            onDeleteBlock={onDeleteBlock}
             onMoveBlockByKeyboard={onMoveBlockByKeyboard}
             onMoveBlock={onMoveBlock}
             onMoveDatabaseRow={onMoveDatabaseRow}
@@ -1405,6 +1575,7 @@ function DocumentCanvas({
 function DocumentBlock({
   block,
   onAddDatabaseRow,
+  onDeleteBlock,
   onMoveBlock,
   onMoveBlockByKeyboard,
   onMoveDatabaseRow,
@@ -1419,6 +1590,7 @@ function DocumentBlock({
 }: {
   block: NodiaryBlock;
   onAddDatabaseRow: (databaseBlockId: string) => void;
+  onDeleteBlock: (blockId: string) => void;
   onMoveBlock: (blockId: string, beforeBlockId: string) => void;
   onMoveBlockByKeyboard: (blockId: string, direction: "up" | "down") => void;
   onMoveDatabaseRow: (
@@ -1448,7 +1620,7 @@ function DocumentBlock({
   return (
     <div
       aria-label={`블록 드롭 위치: ${getBlockLabel(block)}`}
-      className="group grid min-h-9 grid-cols-[28px_1fr] items-start gap-2 rounded-md"
+      className="group relative grid min-h-9 grid-cols-[28px_1fr] items-start gap-2 rounded-md"
       data-testid="document-block"
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
@@ -1462,6 +1634,14 @@ function DocumentBlock({
         }
       }}
     >
+      <button
+        aria-label={`블록 삭제: ${getBlockLabel(block)}`}
+        className="absolute right-1 top-1 z-10 flex h-7 w-7 items-center justify-center rounded text-[var(--nodiary-icon-muted)] opacity-100 hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-text)] sm:right-[-30px] md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
+        onClick={() => onDeleteBlock(block.id)}
+        type="button"
+      >
+        <Trash2 className="h-4 w-4" aria-hidden="true" />
+      </button>
       <div className="flex h-9 items-center justify-center text-[var(--nodiary-icon-faint)] opacity-100 md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100">
         <button
           aria-label={`블록 드래그: ${getBlockLabel(block)}`}
@@ -2454,11 +2634,13 @@ function AiOperatorPanel({
   notice,
   onApprove,
   onChangeAiInput,
+  onChangeModelRoute,
   onClose,
   onReject,
   onSend,
   onToggleScope,
-  onUndo
+  onUndo,
+  selectedModelRoute
 }: {
   className?: string;
   aiInput: string;
@@ -2467,17 +2649,26 @@ function AiOperatorPanel({
   notice: string;
   onApprove: (actionId: string) => void;
   onChangeAiInput: (value: string) => void;
+  onChangeModelRoute: (route: AiModelRoute) => void;
   onClose: () => void;
   onReject: (actionId: string) => void;
   onSend: () => void;
   onToggleScope: (scope: AiContextScope) => void;
   onUndo: () => void;
+  selectedModelRoute: AiModelRoute;
 }) {
   const pendingActions = aiState.runs.flatMap((run) =>
     run.actions
       .filter((action) => action.approvalStatus === "pending")
-      .map((action) => ({ ...action, runCommand: run.command }))
+      .map((action) => ({
+        ...action,
+        runCommand: run.command,
+        runModelName: run.modelName,
+        runModelRoute: run.modelRoute
+      }))
   );
+  const answerRuns = aiState.runs.filter((run) => run.answer).slice(0, 3);
+  const selectedModel = getAiModelOption(selectedModelRoute);
 
   return (
     <aside
@@ -2506,10 +2697,36 @@ function AiOperatorPanel({
           </button>
         </div>
       </div>
+      <div className="mt-3 rounded-md border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-3 py-2">
+        <label className="flex items-center justify-between gap-3 text-[12px] font-medium text-[var(--nodiary-muted)]">
+          <span>AI 모델</span>
+          <select
+            aria-label="AI 모델 선택"
+            className="h-8 rounded border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel-muted)] px-2 text-[12px] text-[var(--nodiary-text)] outline-none"
+            onChange={(event) => onChangeModelRoute(event.target.value as AiModelRoute)}
+            value={selectedModelRoute}
+          >
+            {aiModelOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label} · {option.modelName}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="mt-1 text-[11px] leading-5 text-[var(--nodiary-muted-soft)]">
+          현재 모델: {selectedModel.modelName} · {selectedModel.description}
+        </div>
+      </div>
       <textarea
         aria-label="AI 명령 입력"
         className="mt-3 h-[184px] w-full resize-none rounded-md border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-3 py-3 text-[13px] leading-6 text-[var(--nodiary-text)] outline-none placeholder:text-[var(--nodiary-placeholder)]"
         onChange={(event) => onChangeAiInput(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            onSend();
+          }
+        }}
         placeholder="예: 이 페이지를 더 날카로운 실행 계획으로 다듬어줘. 캘린더 충돌은 승인 큐에 올려."
         value={aiInput}
       />
@@ -2551,7 +2768,7 @@ function AiOperatorPanel({
 
       <section className="mt-4 rounded-md border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-3 py-3">
         <div className="flex items-center justify-between">
-          <div className="text-[13px] font-semibold text-[var(--nodiary-text)]">승인 대기</div>
+          <div className="text-[13px] font-semibold text-[var(--nodiary-text)]">답변 및 승인 대기</div>
           <button
             className="flex h-7 items-center gap-1 rounded px-2 text-[12px] text-[var(--nodiary-muted)] hover:bg-[var(--nodiary-hover)]"
             disabled={aiState.undoLog.length === 0}
@@ -2563,9 +2780,24 @@ function AiOperatorPanel({
           </button>
         </div>
         <div className="mt-3 space-y-3">
-          {pendingActions.length === 0 ? (
+          {answerRuns.map((run) => (
+            <article className="rounded border border-[var(--nodiary-border-strong)] p-3" key={run.id}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[12px] font-semibold text-[var(--nodiary-accent)]">
+                  AI 답변
+                </div>
+                <span className="rounded bg-[var(--nodiary-soft)] px-2 py-1 text-[11px] text-[var(--nodiary-muted)]">
+                  모델: {run.modelName ?? getAiModelOption(run.modelRoute).modelName}
+                </span>
+              </div>
+              <p className="mt-2 text-[13px] leading-6 text-[var(--nodiary-text-strong)]">
+                {run.answer}
+              </p>
+            </article>
+          ))}
+          {pendingActions.length === 0 && answerRuns.length === 0 ? (
             <div className="rounded border border-dashed border-[var(--nodiary-border-strong)] px-3 py-4 text-[12px] leading-5 text-[var(--nodiary-muted-soft)]">
-              AI가 바로 바꾸지 않고, 문서 변경안과 일정 변경안을 승인 큐로 올립니다.
+              질문은 답변으로 남기고, 문서 변경안과 일정 변경안은 승인 큐로 올립니다.
             </div>
           ) : null}
           {pendingActions.map((action) => (
@@ -2578,15 +2810,26 @@ function AiOperatorPanel({
                   <div className="mt-1 text-[13px] font-medium text-[var(--nodiary-text)]">
                     {action.summary}
                   </div>
+                  <div className="mt-1 text-[11px] text-[var(--nodiary-muted-soft)]">
+                    모델: {action.runModelName ?? getAiModelOption(action.runModelRoute).modelName}
+                  </div>
                 </div>
                 <span className="rounded bg-[var(--nodiary-soft)] px-2 py-1 text-[11px] text-[var(--nodiary-muted)]">
                   {getRiskLabel(action.riskLevel)}
                 </span>
               </div>
-              <div className="mt-3 rounded bg-[var(--nodiary-panel-muted)] px-2 py-2 font-mono text-[12px] leading-5 text-[var(--nodiary-text-strong)]">
-                {action.diff.split("\n").map((line, index) => (
-                  <div key={`${action.id}-diff-${index}`}>{line}</div>
-                ))}
+              <div className="mt-3 rounded bg-[var(--nodiary-panel-muted)] px-3 py-2 text-[12px] leading-5 text-[var(--nodiary-text-strong)]">
+                <div className="mb-1 font-semibold text-[var(--nodiary-muted)]">
+                  승인하면 적용되는 내용
+                </div>
+                <div className="space-y-1">
+                  {getApprovalSummaryLines(action).map((line, index) => (
+                    <div className="flex gap-2" key={`${action.id}-summary-${index}`}>
+                      <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--nodiary-accent)]" aria-hidden="true" />
+                      <span>{line}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
               <div className="mt-3 flex items-center justify-between">
                 <span className="text-[12px] text-[var(--nodiary-muted-soft)]">
@@ -3315,6 +3558,154 @@ function getSelectedBlockContext(state: NodiaryState) {
     .filter(Boolean)
     .join("\n")
     .slice(0, 12000);
+}
+
+function getAiModelOption(modelRoute: AiModelRoute) {
+  return (
+    aiModelOptions.find((option) => option.id === modelRoute) ?? aiModelOptions[0]
+  );
+}
+
+function shouldAnswerDirectly(command: string) {
+  const normalized = command.trim();
+
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    normalized.includes("?") ||
+    ["모델", "의도", "왜", "뭐", "무엇", "어떤", "답변", "대답"].some((token) =>
+      normalized.includes(token)
+    )
+  );
+}
+
+function createLocalAiAnswer(command: string, modelRoute: AiModelRoute) {
+  const modelOption = getAiModelOption(modelRoute);
+
+  if (command.includes("모델")) {
+    return `현재 선택한 AI 모델 경로는 ${modelOption.label}이고, 기본 표시 모델은 ${modelOption.modelName}입니다. 서버에 OPENAI_MODEL이 설정되어 있으면 실제 요청은 그 서버 설정 모델로 실행됩니다.`;
+  }
+
+  if (command.includes("의도") || command.includes("노디") || command.includes("Nodiary")) {
+    return "Nodiary의 AI는 꼭 앱에 변경을 반영하기 위해서만 있는 것이 아닙니다. 질문에는 답변으로 돌려주고, 문서나 캘린더를 바꾸는 요청만 승인 카드로 정리해서 사용자가 승인할 때 반영합니다.";
+  }
+
+  return "질문에는 답변으로 돌려주고, 문서나 캘린더를 바꾸는 요청만 승인 카드로 올립니다. 변경을 원하면 무엇을 바꿀지 말해주면 승인 전에 요약해서 보여드릴게요.";
+}
+
+function getApprovalSummaryLines(action: {
+  diff: string;
+  summary: string;
+}): string[] {
+  const parsedDiff = parseJsonObject(action.diff);
+  const parsedLines = parsedDiff ? summarizeApprovalValue(parsedDiff) : [];
+  const textLines = action.diff
+    .split("\n")
+    .map(cleanApprovalTextLine)
+    .filter(Boolean);
+  const detailLines = parsedLines.length > 0 ? parsedLines : textLines;
+  const lines = uniqueStrings(detailLines.length > 0 ? detailLines : [action.summary]);
+
+  return lines.slice(0, 5);
+}
+
+function parseJsonObject(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function summarizeApprovalValue(value: unknown): string[] {
+  if (typeof value === "string") {
+    return [value];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap(summarizeApprovalValue);
+  }
+
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+
+  const record = value as Record<string, unknown>;
+  const lines: string[] = [];
+
+  if (typeof record.humanReadable === "string") {
+    lines.push(record.humanReadable);
+  }
+
+  if (typeof record.target === "string") {
+    lines.push(record.target);
+  }
+
+  if (typeof record.before === "string" && typeof record.after === "string") {
+    lines.push(`${record.before} -> ${record.after}`);
+  } else if (typeof record.after === "string") {
+    lines.push(`변경 후: ${record.after}`);
+  }
+
+  if (Array.isArray(record.changes)) {
+    for (const change of record.changes) {
+      if (!change || typeof change !== "object") {
+        continue;
+      }
+
+      const changeRecord = change as Record<string, unknown>;
+      const field = typeof changeRecord.field === "string" ? changeRecord.field : "변경";
+      const from = typeof changeRecord.from === "string" ? changeRecord.from : "";
+      const to = typeof changeRecord.to === "string" ? changeRecord.to : "";
+
+      if (to) {
+        lines.push(from ? `${field}: ${from} -> ${to}` : `${field}: ${to}`);
+      }
+    }
+  }
+
+  if (record.after && typeof record.after === "object" && !Array.isArray(record.after)) {
+    lines.push(...summarizeObjectFields(record.after as Record<string, unknown>));
+  }
+
+  return uniqueStrings(lines);
+}
+
+function summarizeObjectFields(record: Record<string, unknown>) {
+  const labels: Record<string, string> = {
+    title: "제목",
+    start: "시작",
+    end: "종료",
+    date: "날짜",
+    time: "시간",
+    text: "내용",
+    status: "상태",
+    owner: "담당"
+  };
+
+  return Object.entries(record)
+    .filter(([, value]) => typeof value === "string" && value.trim().length > 0)
+    .map(([key, value]) => `${labels[key] ?? key}: ${value as string}`);
+}
+
+function cleanApprovalTextLine(line: string) {
+  const cleaned = line
+    .trim()
+    .replace(/^[+-]\s*/, "")
+    .replace(/^["']|["',]+$/g, "")
+    .trim();
+
+  if (!cleaned || cleaned === "{" || cleaned === "}" || cleaned === "[" || cleaned === "]") {
+    return "";
+  }
+
+  return cleaned;
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
 function getOperatorToolLabel(toolName: string) {

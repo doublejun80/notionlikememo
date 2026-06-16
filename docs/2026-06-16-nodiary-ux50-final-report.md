@@ -272,3 +272,53 @@
   - `/tmp/nodiary-icon-hig-preview.png`
   - `/tmp/nodiary-icon-dock-wide.png`
   - `/tmp/nodiary-icon-electron-qa.png`
+
+## 2026-06-16 Page Delete and AI Answer Hotfix
+
+추가 수정:
+
+- Page tree에 페이지 이름 변경/삭제 액션을 추가했다.
+  - 같은 depth의 chevron slot/drag slot/title 시작 축은 유지한다.
+  - 이름 변경은 inline input으로 처리하며 Enter 확정, Escape 취소를 지원한다.
+  - 페이지 삭제는 하위 page subtree와 `pages` cache를 함께 정리한다.
+- 모든 document block에 삭제 액션을 추가했다.
+  - callout도 삭제 가능하다.
+  - block handle/keyboard drag fallback은 제거하지 않았다.
+- AI 글쓰기 입력 UX를 바꿨다.
+  - Enter는 바로 실행한다.
+  - Shift+Enter는 줄바꿈으로 유지한다.
+- AI panel에 모델 선택과 현재 모델 표시를 추가했다.
+  - route: `quick`, `planner`, `large-context`.
+  - 기본 표시 모델: `gpt-5.5`.
+  - 서버에 `OPENAI_MODEL`이 설정되어 있으면 `/api/ai/operator` 응답에 실제 resolved model을 같이 반환한다.
+- AI section title을 `답변 및 승인 대기`로 변경했다.
+- 일반 질문은 approval card로 억지 변환하지 않고 `AI 답변` 카드로 남긴다.
+- 승인 대기 card에서 raw JSON/diff/code 표시를 제거했다.
+  - `승인하면 적용되는 내용` 요약만 보여준다.
+  - 승인 시 기존처럼 즉시 실제 state에 반영되고 pending queue에서 빠진다.
+
+추가 검증:
+
+- `npm test`: 13 files, 96 tests passed.
+- `npm run typecheck`: passed.
+- `npm run lint`: passed.
+- `npm run build`: passed.
+- `CSC_IDENTITY_AUTO_DISCOVERY=false npm run electron:pack`: passed.
+- `npm audit --audit-level=moderate`: 0 vulnerabilities.
+- Playwright Electron QA:
+  - app title/url: `Nodiary`, `http://127.0.0.1:3000/`
+  - first-screen project DB block count: `0`
+  - page rename result: `회의록 QA`
+  - renamed page delete: `true`
+  - callout delete: `true`
+  - block handle still visible after callout delete: `true`
+  - selected AI model route: `large-context`
+  - direct AI answer visible: `true`
+  - approval section title count: `1`
+  - raw `"after"`/`+ AI 실행 계획 callout` visible count: `0`
+  - approved text visible in document: `true`
+  - pending approve buttons after approval: `0`
+  - console errors/warnings: `0`
+- Latest page/delete/AI QA artifacts outside the repo:
+  - `/tmp/nodiary-delete-ai-qa/electron-page-delete-ai-approval.png`
+  - `/tmp/nodiary-delete-ai-qa/electron-results.json`

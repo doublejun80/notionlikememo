@@ -190,6 +190,54 @@
   - `CSC_IDENTITY_AUTO_DISCOVERY=false npm run electron:pack`: passed.
   - `npm audit --audit-level=moderate`: 0 vulnerabilities.
 
+## 2026-06-16 Page/Delete/AI Answer Hotfix 상태
+
+- Page tree row에 페이지 이름 변경/삭제 액션을 추가했다.
+  - 같은 depth의 chevron slot, drag slot, title slot 시작 축은 유지한다.
+  - 이름 변경은 inline input이며 Enter 확정, Escape 취소를 지원한다.
+  - 페이지 삭제는 삭제한 node의 하위 subtree와 `pages` cache를 같이 정리한다.
+- 모든 document block에 삭제 액션을 추가했다.
+  - callout 삭제가 가능하다.
+  - block handle과 Alt+Arrow keyboard move fallback은 유지했다.
+- AI 글쓰기 입력은 Enter 실행, Shift+Enter 줄바꿈으로 변경했다.
+- AI panel에 `AI 모델 선택` control과 현재 모델 표시를 추가했다.
+  - UI route: `quick`, `planner`, `large-context`.
+  - 기본 표시 모델은 `gpt-5.5`.
+  - `/api/ai/operator`는 selected `modelRoute`를 받고, resolved `model`/`modelRoute`를 응답에 포함한다.
+- AI approval section title은 `답변 및 승인 대기`로 변경했다.
+- 일반 질문은 approval proposal로 억지 변환하지 않고 `AI 답변` card로 렌더한다.
+- Approval card는 더 이상 raw JSON/diff/code를 보여주지 않는다.
+  - `승인하면 적용되는 내용` 요약만 보여준다.
+  - 승인 후 action은 즉시 state에 반영되고 pending queue에서 빠진다.
+
+Latest verification:
+
+- `npm test`: 13 files, 96 tests passed.
+- `npm run typecheck`: passed.
+- `npm run lint`: passed.
+- `npm run build`: passed.
+- `CSC_IDENTITY_AUTO_DISCOVERY=false npm run electron:pack`: passed.
+- `npm audit --audit-level=moderate`: 0 vulnerabilities.
+
+Latest Electron QA:
+
+- Playwright Electron launched `.nodiary-electron/Nodiary.app/Contents/MacOS/Nodiary`.
+- app title/url: `Nodiary`, `http://127.0.0.1:3000/`.
+- first-screen project DB count: `0`.
+- page rename/delete: `회의록 QA`, deleted `true`.
+- callout delete: `true`.
+- block handle still visible after callout delete: `true`.
+- selected AI model route: `large-context`.
+- direct AI answer visible: `true`.
+- approval title visible: `답변 및 승인 대기`.
+- raw `"after"`/`+ AI 실행 계획 callout` visible count: `0`.
+- approved text visible in document: `true`.
+- pending approve buttons after approval: `0`.
+- console errors/warnings: `0`.
+- Latest artifacts outside the repo:
+  - `/tmp/nodiary-delete-ai-qa/electron-page-delete-ai-approval.png`
+  - `/tmp/nodiary-delete-ai-qa/electron-results.json`
+
 ## 아직 남은 이슈
 
 - Slash menu 검색/필터 미구현.

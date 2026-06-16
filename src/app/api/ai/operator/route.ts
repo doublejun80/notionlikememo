@@ -7,6 +7,9 @@ const MAX_SELECTED_TEXT_LENGTH = 12000;
 const MAX_PAGE_TITLE_LENGTH = 160;
 const MAX_MEMORY_ITEMS = 8;
 const MAX_MEMORY_ITEM_LENGTH = 500;
+const DEFAULT_OPENAI_OPERATOR_MODEL = "gpt-5.5";
+
+type AiModelRoute = "quick" | "planner" | "large-context";
 
 export async function POST(request: Request) {
   if (!isAuthorizedLocalRequest(request)) {
@@ -44,16 +47,22 @@ export async function POST(request: Request) {
   }
 
   try {
+    const model = resolveOperatorModel();
     const plan = await requestOpenAiOperatorPlan({
       command: parsedBody.value.command,
       pageTitle: parsedBody.value.pageTitle,
       selectedText: parsedBody.value.selectedText,
       memory: parsedBody.value.memory
     }, {
-      apiKey
+      apiKey,
+      model
     });
 
-    return NextResponse.json({ plan });
+    return NextResponse.json({
+      model,
+      modelRoute: parsedBody.value.modelRoute,
+      plan
+    });
   } catch {
     return NextResponse.json(
       {
@@ -69,6 +78,7 @@ type ParsedOperatorBody =
       ok: true;
       value: {
         command: string;
+        modelRoute: AiModelRoute;
         pageTitle: string;
         selectedText: string;
         memory: string[];
@@ -116,11 +126,22 @@ function parseOperatorBody(body: unknown): ParsedOperatorBody {
     ok: true,
     value: {
       command: command.trim(),
+      modelRoute: readModelRoute(record.modelRoute),
       pageTitle: pageTitle?.trim() || "오늘의 계획",
       selectedText: selectedText ?? "",
       memory: memory.value
     }
   };
+}
+
+function readModelRoute(value: unknown): AiModelRoute {
+  return value === "quick" || value === "large-context" || value === "planner"
+    ? value
+    : "planner";
+}
+
+function resolveOperatorModel() {
+  return process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_OPERATOR_MODEL;
 }
 
 function readLimitedString(value: unknown, maxLength: number) {

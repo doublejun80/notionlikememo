@@ -92,6 +92,51 @@ describe("HomePage", () => {
     );
   });
 
+  it("renames and deletes pages directly from the page tree", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    await user.click(screen.getByRole("button", { name: "페이지 이름 변경: 회의록" }));
+
+    const titleInput = screen.getByLabelText("페이지 제목 편집: 회의록");
+
+    await user.clear(titleInput);
+    await user.type(titleInput, "회의록 수정{Enter}");
+
+    expect(screen.getByTestId("page-tree-title-meetings")).toHaveTextContent(
+      "회의록 수정"
+    );
+
+    await user.click(screen.getByRole("button", { name: "페이지 삭제: 회의록 수정" }));
+
+    expect(screen.queryByTestId("page-tree-title-meetings")).not.toBeInTheDocument();
+    expect(screen.queryByText("회의록 수정")).not.toBeInTheDocument();
+  });
+
+  it("deletes document blocks, including callouts, without removing the block handle system", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    expect(screen.getByText(/이 화면의 주인공은 문서다/)).toBeInTheDocument();
+    expect(screen.getByLabelText("블록 드래그: 메모 본문")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /블록 삭제: 이 화면의 주인공은 문서다/
+      })
+    );
+
+    expect(screen.queryByText(/이 화면의 주인공은 문서다/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("블록 드래그: 메모 본문")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "블록 삭제: 오늘 해야 할 것" }));
+    expect(
+      screen.queryByRole("heading", { name: "오늘 해야 할 것" })
+    ).not.toBeInTheDocument();
+  });
+
   it("opens slash menu and inserts a view-switchable project database block", async () => {
     const user = userEvent.setup();
 
@@ -281,6 +326,81 @@ describe("HomePage", () => {
     expect(selectedBlockScope).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("uses Enter to send AI commands, Shift+Enter for new lines, and shows the selected model", async () => {
+    const user = userEvent.setup();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          model: "gpt-5.5",
+          modelRoute: "large-context",
+          plan: {
+            summary: "긴 문맥으로 실행 계획을 정리합니다.",
+            actions: [
+              {
+                toolName: "updateBlock",
+                argsJson: {
+                  blockId: "memo-body",
+                  text: "긴 문맥 모델로 정리한 문장"
+                },
+                diffJson: {
+                  after: "긴 문맥 모델로 정리한 문장"
+                },
+                riskLevel: "medium",
+                undoJson: {}
+              }
+            ],
+            memories: []
+          }
+        })
+      }))
+    );
+
+    render(<HomePage />);
+
+    const modelSelect = await screen.findByLabelText("AI 모델 선택");
+    const input = await screen.findByLabelText("AI 명령 입력");
+
+    expect(modelSelect).toHaveValue("planner");
+
+    await user.selectOptions(modelSelect, "large-context");
+    await user.type(input, "첫 줄");
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    await user.type(input, "둘째 줄");
+
+    expect(input).toHaveValue("첫 줄\n둘째 줄");
+
+    await user.keyboard("{Enter}");
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/ai/operator",
+        expect.objectContaining({
+          body: expect.stringContaining('"modelRoute":"large-context"')
+        })
+      )
+    );
+    expect((await screen.findAllByText(/모델: gpt-5.5/)).length).toBeGreaterThan(0);
+  });
+
+  it("answers general AI questions without forcing an approval card", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    const input = await screen.findByLabelText("AI 명령 입력");
+
+    await user.type(input, "AI를 꼭 노디이어리에 반영하기 위해 만든 거야?");
+    await user.keyboard("{Enter}");
+
+    expect(await screen.findByText("AI 답변")).toBeInTheDocument();
+    expect(screen.getByText(/질문에는 답변으로 돌려주고/)).toBeInTheDocument();
+    expect(screen.getByText("답변 및 승인 대기")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
+  });
+
   it("adds and edits database rows from the inserted database block", async () => {
     const user = userEvent.setup();
 
@@ -362,6 +482,8 @@ describe("HomePage", () => {
       vi.fn(async () => ({
         ok: true,
         json: async () => ({
+          model: "gpt-5.5",
+          modelRoute: "planner",
           plan: {
             summary: "문서를 승인 가능한 실행 계획으로 정리합니다.",
             actions: [
@@ -401,10 +523,11 @@ describe("HomePage", () => {
         method: "POST"
       })
     );
-    expect(screen.getAllByText("승인 대기").length).toBeGreaterThan(0);
+    expect(screen.getByText("답변 및 승인 대기")).toBeInTheDocument();
     expect(
       await screen.findByText(/AI가 승인 후 반영한 문장/)
     ).toBeInTheDocument();
+    expect(screen.queryByText(/"after"/)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "승인" }));
     expect(getDocumentBlock("메모 본문")).toHaveTextContent(
@@ -423,6 +546,8 @@ describe("HomePage", () => {
       vi.fn(async () => ({
         ok: true,
         json: async () => ({
+          model: "gpt-5.5",
+          modelRoute: "planner",
           plan: {
             summary: "내일 업체 미팅 일정을 추가합니다.",
             actions: [
@@ -483,6 +608,8 @@ describe("HomePage", () => {
       vi.fn(async () => ({
         ok: true,
         json: async () => ({
+          model: "gpt-5.5",
+          modelRoute: "planner",
           plan: {
             summary: "디자인 리뷰 일정을 승인 큐로 이동합니다.",
             actions: [
@@ -529,6 +656,7 @@ describe("HomePage", () => {
     await user.click(screen.getByRole("button", { name: "AI에게 보내기" }));
 
     expect(await screen.findByText(/2026-06-18 16:30/)).toBeInTheDocument();
+    expect(screen.queryByText(/"changes"/)).not.toBeInTheDocument();
     expect(
       consoleError.mock.calls.some(([message]) =>
         String(message).includes("Encountered two children with the same key")
@@ -560,7 +688,8 @@ describe("HomePage", () => {
     expect(
       await screen.findByText("OpenAI 연결에 실패해 로컬 초안으로 승인 큐를 만들었습니다.")
     ).toBeInTheDocument();
-    expect(await screen.findByText("+ AI 실행 계획 callout")).toBeInTheDocument();
+    expect(await screen.findByText(/실행 계획 callout과 확인 작업/)).toBeInTheDocument();
+    expect(screen.queryByText("+ AI 실행 계획 callout")).not.toBeInTheDocument();
   });
 
   it("turns local AI calendar move fallback into an approval proposal", async () => {

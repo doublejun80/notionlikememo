@@ -4,9 +4,12 @@ import {
   addDatabaseRow,
   approveAiAction,
   changeCalendarMonth,
+  createAiAnswerRun,
   createAiRunFromOperatorPlan,
   createAiRun,
   defaultNodiaryState,
+  deleteBlock,
+  deletePage,
   getDatabaseRowsForView,
   insertBlockFromSlash,
   moveBlock,
@@ -16,6 +19,7 @@ import {
   movePageNode,
   movePageNodeByKeyboard,
   rejectAiAction,
+  renamePage,
   requestCalendarEventMove,
   selectCalendarDate,
   selectPage,
@@ -83,6 +87,32 @@ describe("nodiary model", () => {
     );
 
     expect(databaseBlock?.database?.activeView).toBe("calendar");
+  });
+
+  it("removes document blocks including callouts without disturbing other blocks", () => {
+    const state = defaultNodiaryState();
+    const nextState = deleteBlock(state, "owner-note");
+
+    expect(nextState.activePage.blocks.some((block) => block.id === "owner-note")).toBe(
+      false
+    );
+    expect(nextState.activePage.blocks.some((block) => block.id === "memo-body")).toBe(
+      true
+    );
+  });
+
+  it("renames and deletes pages while keeping the tree and page cache in sync", () => {
+    const state = selectPage(defaultNodiaryState(), "fix-list");
+    const renamed = renamePage(state, "meetings", "회의록 수정");
+    const selectedRenamed = selectPage(renamed, "meetings");
+    const deleted = deletePage(selectedRenamed, "planning");
+    const flattenedIds = JSON.stringify(deleted.pageTree);
+
+    expect(selectedRenamed.activePage.title).toBe("회의록 수정");
+    expect(flattenedIds).not.toContain("planning");
+    expect(flattenedIds).not.toContain("fix-list");
+    expect(deleted.pages["planning"]).toBeUndefined();
+    expect(deleted.pages["fix-list"]).toBeUndefined();
   });
 
   it("adds editable database rows with stable unique ids", () => {
@@ -194,6 +224,26 @@ describe("nodiary model", () => {
     expect(undone.activePage.blocks.some((block) => block.id === "ai-plan")).toBe(
       false
     );
+  });
+
+  it("stores direct AI answers without creating an approval action", () => {
+    const answered = createAiAnswerRun(
+      defaultNodiaryState(),
+      "너는 어떤 모델이야?",
+      "현재 선택한 모델은 gpt-5.5입니다.",
+      "planner",
+      "gpt-5.5"
+    );
+    const run = answered.ai.runs[0];
+
+    expect(run).toMatchObject({
+      status: "completed",
+      command: "너는 어떤 모델이야?",
+      modelRoute: "planner",
+      modelName: "gpt-5.5",
+      answer: "현재 선택한 모델은 gpt-5.5입니다.",
+      actions: []
+    });
   });
 
   it("parses local AI fallback calendar move commands into approval proposals", () => {

@@ -21,6 +21,8 @@ export type ApprovalStatus = "pending" | "approved" | "rejected" | "undone";
 
 export type RiskLevel = "low" | "medium" | "high";
 
+export type AiModelRoute = "quick" | "planner" | "large-context";
+
 export type DatabaseFieldType = "text" | "status" | "date" | "person";
 
 export type DatabaseField = {
@@ -137,7 +139,9 @@ export type AiRun = {
   id: string;
   command: string;
   status: "awaiting_approval" | "completed";
-  modelRoute: "quick" | "planner" | "large-context";
+  modelRoute: AiModelRoute;
+  modelName?: string;
+  answer?: string;
   actions: AiProposedAction[];
 };
 
@@ -452,6 +456,31 @@ export function updateBlockTitle(
   });
 }
 
+export function deleteBlock(state: NodiaryState, blockId: string): NodiaryState {
+  if (!state.activePage.blocks.some((block) => block.id === blockId)) {
+    return state;
+  }
+
+  const remainingBlocks = state.activePage.blocks.filter(
+    (block) => block.id !== blockId
+  );
+  const blocks =
+    remainingBlocks.length > 0
+      ? remainingBlocks
+      : [
+          {
+            id: createUniqueId(new Set(), "paragraph"),
+            type: "paragraph" as const,
+            text: ""
+          }
+        ];
+
+  return withActivePage(state, {
+    ...state.activePage,
+    blocks
+  });
+}
+
 export function createNewPage(state: NodiaryState): NodiaryState {
   const existingIds = new Set(flattenPageNodes(state.pageTree).map((node) => node.id));
   const pageId = createUniqueId(existingIds, "new-page");
@@ -585,6 +614,88 @@ export function updatePageTitle(
       title: nextTitle
     }
   );
+}
+
+export function renamePage(
+  state: NodiaryState,
+  pageId: string,
+  title: string
+): NodiaryState {
+  const pageNode = findPageNode(state.pageTree, pageId);
+
+  if (!pageNode) {
+    return state;
+  }
+
+  const nextTitle = title.trim() || pageNode.title;
+  const pages = {
+    ...getStatePages(state),
+    [state.activePage.id]: state.activePage
+  };
+  const activePage =
+    state.activePage.id === pageId
+      ? {
+          ...state.activePage,
+          title: nextTitle
+        }
+      : state.activePage;
+  const nextPages = {
+    ...pages,
+    ...(pages[pageId]
+      ? {
+          [pageId]: {
+            ...pages[pageId],
+            title: nextTitle
+          }
+        }
+      : {}),
+    [activePage.id]: activePage
+  };
+
+  return {
+    ...state,
+    pageTree: updatePageNodeTitle(state.pageTree, pageId, nextTitle),
+    pages: nextPages,
+    activePage
+  };
+}
+
+export function deletePage(state: NodiaryState, pageId: string): NodiaryState {
+  const { nodes, removed } = removePageNode(state.pageTree, pageId);
+
+  if (!removed) {
+    return state;
+  }
+
+  const remainingNodes = flattenPageNodes(nodes);
+
+  if (remainingNodes.length === 0) {
+    return state;
+  }
+
+  const removedIds = new Set(flattenPageNodes([removed]).map((node) => node.id));
+  const pages = {
+    ...getStatePages(state),
+    [state.activePage.id]: state.activePage
+  };
+
+  removedIds.forEach((removedId) => {
+    delete pages[removedId];
+  });
+
+  const nextActivePage = removedIds.has(state.activePage.id)
+    ? pages[remainingNodes[0].id] ?? createPageFromNode(remainingNodes[0])
+    : state.activePage;
+
+  return {
+    ...state,
+    pageTree: nodes,
+    pages: {
+      ...pages,
+      [nextActivePage.id]: nextActivePage
+    },
+    activePage: nextActivePage
+  };
 }
 
 export function togglePageNodeExpanded(
@@ -984,8 +1095,49 @@ export function moveCalendarEvent(
   };
 }
 
-export function createAiRun(state: NodiaryState, command: string): NodiaryState {
-  const calendarMoveRun = createCalendarMoveRunFromCommand(state, command);
+export function createAiAnswerRun(
+  state: NodiaryState,
+  command: string,
+  answer: string,
+  modelRoute: AiModelRoute = "planner",
+  modelName?: string
+): NodiaryState {
+  const run: AiRun = {
+    id: `answer-run-${state.ai.runs.length + 1}`,
+    command,
+    status: "completed",
+    modelRoute,
+    modelName,
+    answer,
+    actions: []
+  };
+
+  return {
+    ...state,
+    ai: {
+      ...state.ai,
+      panelInput: "",
+      runs: [run, ...state.ai.runs]
+    }
+  };
+}
+
+function getDefaultAiModelRoute(command: string): AiModelRoute {
+  return command.length > 120 ? "large-context" : "planner";
+}
+
+export function createAiRun(
+  state: NodiaryState,
+  command: string,
+  modelRoute: AiModelRoute = getDefaultAiModelRoute(command),
+  modelName?: string
+): NodiaryState {
+  const calendarMoveRun = createCalendarMoveRunFromCommand(
+    state,
+    command,
+    modelRoute,
+    modelName
+  );
 
   if (calendarMoveRun) {
     return calendarMoveRun;
@@ -1023,7 +1175,8 @@ export function createAiRun(state: NodiaryState, command: string): NodiaryState 
     id: `run-${state.ai.runs.length + 1}`,
     command,
     status: "awaiting_approval",
-    modelRoute: command.length > 120 ? "large-context" : "planner",
+    modelRoute,
+    modelName,
     actions: [action]
   };
 
@@ -1039,7 +1192,9 @@ export function createAiRun(state: NodiaryState, command: string): NodiaryState 
 
 function createCalendarMoveRunFromCommand(
   state: NodiaryState,
-  command: string
+  command: string,
+  modelRoute: AiModelRoute = "planner",
+  modelName?: string
 ): NodiaryState | undefined {
   const targetDate = parseCalendarCommandDate(
     command,
@@ -1094,7 +1249,8 @@ function createCalendarMoveRunFromCommand(
     id: `local-calendar-run-${runIndex}`,
     command,
     status: "awaiting_approval",
-    modelRoute: "planner",
+    modelRoute,
+    modelName,
     actions: [action]
   };
 
@@ -1111,7 +1267,9 @@ function createCalendarMoveRunFromCommand(
 export function createAiRunFromOperatorPlan(
   state: NodiaryState,
   command: string,
-  plan: OperatorPlanDraft
+  plan: OperatorPlanDraft,
+  modelRoute: AiModelRoute = getDefaultAiModelRoute(command),
+  modelName?: string
 ): NodiaryState {
   const runNumber = state.ai.runs.length + 1;
   const actions: AiProposedAction[] = plan.actions.map((action, index) => {
@@ -1153,7 +1311,8 @@ export function createAiRunFromOperatorPlan(
     id: `operator-run-${runNumber}`,
     command,
     status: "awaiting_approval",
-    modelRoute: command.length > 120 ? "large-context" : "planner",
+    modelRoute,
+    modelName,
     actions
   };
   const memories = [
