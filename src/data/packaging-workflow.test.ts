@@ -30,4 +30,29 @@ describe("desktop packaging workflow", () => {
     expect(electronMain).toContain('backgroundColor: "#f4f2ee"');
     expect(electronMain).toContain("trafficLightPosition");
   });
+
+  it("uses the top-layer NotebookPen mark for the favicon and app icon", () => {
+    const topLayerNotebookPenPath =
+      "M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4";
+    const faviconPath = join(process.cwd(), "src", "app", "icon.svg");
+    const desktopIconPath = join(process.cwd(), "build", "icon.svg");
+    const layoutPath = join(process.cwd(), "src", "app", "layout.tsx");
+
+    expect(existsSync(faviconPath)).toBe(true);
+
+    if (!existsSync(faviconPath)) {
+      return;
+    }
+
+    const favicon = readFileSync(faviconPath, "utf8");
+    const desktopIcon = readFileSync(desktopIconPath, "utf8");
+    const layout = readFileSync(layoutPath, "utf8");
+
+    expect(favicon).toContain(topLayerNotebookPenPath);
+    expect(desktopIcon).toContain(topLayerNotebookPenPath);
+    expect(favicon).toContain('fill="#24211d"');
+    expect(favicon).toContain('stroke="#fbfaf7"');
+    expect(layout).toContain("icons:");
+    expect(layout).toContain('/icon.svg');
+  });
 });

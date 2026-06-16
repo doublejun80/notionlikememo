@@ -7,7 +7,11 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Nodiary",
-  description: "Notion-like personal document workspace with AI operator support"
+  description: "Notion-like personal document workspace with AI operator support",
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    shortcut: [{ url: "/icon.svg", type: "image/svg+xml" }]
+  }
 };
 
 export default function RootLayout({
