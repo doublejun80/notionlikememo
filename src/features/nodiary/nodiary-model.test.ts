@@ -42,8 +42,10 @@ describe("nodiary model", () => {
       false
     );
     expect(state.sidebarCalendar.days).toHaveLength(35);
-    expect(state.sidebarCalendar.days.at(0)?.label).toBe("1");
-    expect(state.sidebarCalendar.days.at(-1)?.label).toBe("5");
+    expect(state.sidebarCalendar.days.at(0)?.isoDate).toBe("2026-05-31");
+    expect(state.sidebarCalendar.days.at(0)?.label).toBe("31");
+    expect(state.sidebarCalendar.days.at(-1)?.isoDate).toBe("2026-07-04");
+    expect(state.sidebarCalendar.days.at(-1)?.label).toBe("4");
   });
 
   it("inserts a contextual project database block from the slash menu", () => {
@@ -189,11 +191,19 @@ describe("nodiary model", () => {
     expect(nextMonth.sidebarCalendar.selectedDate).toBe("2026-07-01");
     expect(nextMonth.sidebarCalendar.days).toHaveLength(35);
     expect(nextMonth.sidebarCalendar.days[0]).toMatchObject({
-      isoDate: "2026-06-29",
-      label: "29"
+      isoDate: "2026-06-28",
+      label: "28"
+    });
+    expect(nextMonth.sidebarCalendar.days.at(-1)).toMatchObject({
+      isoDate: "2026-08-01",
+      label: "1"
     });
     expect(previousMonth.sidebarCalendar.monthLabel).toBe("2026년 6월");
     expect(previousMonth.sidebarCalendar.selectedDate).toBe("2026-06-01");
+    expect(previousMonth.sidebarCalendar.days[0]).toMatchObject({
+      isoDate: "2026-05-31",
+      label: "31"
+    });
   });
 
   it("creates approval-gated AI actions and keeps undo payloads", () => {

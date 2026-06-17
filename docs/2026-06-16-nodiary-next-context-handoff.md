@@ -12,6 +12,25 @@
 - product direction: Nodiary, Notion Core Clone-lite, Electron 유지.
 - first screen rule: 프로젝트 대시보드가 아니라 `오늘의 계획` 문서 편집 화면.
 
+## 2026-06-17 핫픽스
+
+- sidebar mini calendar와 database calendar의 요일 순서를 한국 사용자가 기대하는 `일 월 화 수 목 금 토`로 변경했다.
+- calendar grid 생성 로직을 월요일 기준 offset에서 일요일 기준 offset으로 바꿨다. 2026년 6월은 `2026-05-31`부터 `2026-07-04`까지 35칸으로 렌더링된다.
+- database calendar도 같은 일요일 시작 grid를 사용한다. 첫 칸은 `2026-05-31`, 마지막 칸은 `2026-07-04`다.
+- quick capture localStorage를 client 첫 render에서 읽지 않도록 바꿔 SSR hydration mismatch를 제거했다. 저장된 quick capture는 mount 이후 표시된다.
+- regression test 추가:
+  - sidebar calendar weekday/order/range.
+  - database calendar weekday/order/range.
+  - stored quick capture가 있어도 hydration error가 나지 않는 케이스.
+- 검증:
+  - `npm test`: 13 files, 98 tests passed.
+  - `npm run typecheck`: passed.
+  - `npm run lint`: passed.
+  - `npm run build`: passed.
+  - Playwright Electron QA: stored quick capture 주입 후 reload, hydration 관련 console/page error 0, sidebar/database calendar 모두 Sunday-first 확인.
+- QA screenshot outside repo:
+  - `/tmp/nodiary-calendar-hydration-qa.png`
+
 ## 최신 핫픽스
 
 - OpenAI operator 연결 실패의 실제 원인은 Responses API strict schema가 object형 `argsJson`/`diffJson`/`undoJson`을 거부한 것이었다. 해당 필드를 JSON string contract로 바꾸고, 서버 파서에서 JSON string을 다시 record로 복원하게 수정했다.

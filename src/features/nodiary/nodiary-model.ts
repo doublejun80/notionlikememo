@@ -1577,13 +1577,13 @@ function buildCalendarDays(
 ): CalendarDay[] {
   const [year, month] = parseMonthKey(visibleMonth);
   const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
-  const mondayOffset = (firstWeekday + 6) % 7;
+  const sundayOffset = firstWeekday;
   const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  const cellCount = Math.ceil((mondayOffset + daysInMonth) / 7) * 7;
+  const cellCount = Math.ceil((sundayOffset + daysInMonth) / 7) * 7;
   const days: CalendarDay[] = [];
 
   for (let cellIndex = 0; cellIndex < cellCount; cellIndex += 1) {
-    const date = new Date(Date.UTC(year, month - 1, 1 - mondayOffset + cellIndex));
+    const date = new Date(Date.UTC(year, month - 1, 1 - sundayOffset + cellIndex));
     const isoDate = formatIsoDate(date);
     const calendar = {
       visibleMonth,

@@ -69,9 +69,17 @@ describe("HomePage", () => {
 
     const calendar = screen.getByRole("grid", { name: "2026년 6월" });
     const dayButtons = within(calendar).getAllByRole("button");
+    const weekdayHeader = calendar.previousElementSibling as HTMLElement;
 
+    expect(
+      Array.from(weekdayHeader.querySelectorAll("div")).map((weekday) =>
+        weekday.textContent?.trim()
+      )
+    ).toEqual(["일", "월", "화", "수", "목", "금", "토"]);
     expect(dayButtons).toHaveLength(35);
+    expect(dayButtons.at(0)).toHaveAccessibleName("2026-05-31");
     expect(within(calendar).getByRole("button", { name: "2026-06-16 선택됨" }));
+    expect(dayButtons.at(-1)).toHaveAccessibleName("2026-07-04");
     expect(screen.getByText("제품 기획서 정리")).toBeInTheDocument();
   });
 
@@ -308,6 +316,48 @@ describe("HomePage", () => {
     expect(errorOutput).not.toContain("A tree hydrated");
   });
 
+  it("does not render stored quick captures during the first hydrated render", async () => {
+    const realWindow = window;
+
+    window.localStorage.setItem(
+      "nodiary.quickCapture.v1",
+      JSON.stringify([
+        {
+          id: "capture-stored",
+          text: "저장된 빠른 캡처",
+          createdLabel: "방금"
+        }
+      ])
+    );
+
+    vi.stubGlobal("window", undefined);
+    const html = renderToString(<HomePage />);
+    vi.stubGlobal("window", realWindow);
+    document.body.innerHTML = `<div id="hydrate-root">${html}</div>`;
+
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const container = document.getElementById("hydrate-root");
+
+    expect(container).not.toBeNull();
+
+    let root: ReturnType<typeof hydrateRoot> | undefined;
+
+    await act(async () => {
+      root = hydrateRoot(container as HTMLElement, <HomePage />);
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+    });
+
+    const errorOutput = consoleError.mock.calls
+      .map((call) => call.map(String).join(" "))
+      .join("\n");
+
+    root?.unmount();
+    consoleError.mockRestore();
+
+    expect(errorOutput).not.toContain("Hydration failed");
+    expect(errorOutput).not.toContain("A tree hydrated");
+  });
+
   it("lets the AI operator toggle live context scopes before sending", async () => {
     const user = userEvent.setup();
 
@@ -454,6 +504,30 @@ describe("HomePage", () => {
     expect(screen.getByLabelText("필드 유형: 담당")).toHaveValue("text");
   });
 
+  it("renders database calendar columns from Sunday through Saturday", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    await user.click(screen.getByLabelText("빈 블록 입력"));
+    await user.keyboard("/");
+    await user.click(screen.getByRole("menuitem", { name: "데이터베이스 추가" }));
+    await user.click(screen.getByRole("tab", { name: "캘린더" }));
+
+    const calendar = screen.getByRole("grid", { name: "고쳐야 할 50개 리스트 캘린더" });
+    const weekdayHeader = calendar.previousElementSibling as HTMLElement;
+    const calendarCells = within(calendar).getAllByRole("gridcell");
+
+    expect(
+      Array.from(weekdayHeader.querySelectorAll("div")).map((weekday) =>
+        weekday.textContent?.trim()
+      )
+    ).toEqual(["일", "월", "화", "수", "목", "금", "토"]);
+    expect(calendarCells).toHaveLength(35);
+    expect(calendarCells.at(0)).toHaveAccessibleName("2026-05-31");
+    expect(calendarCells.at(-1)).toHaveAccessibleName("2026-07-04");
+  });
+
   it("navigates the sidebar month calendar without clipping the grid", async () => {
     const user = userEvent.setup();
 
@@ -462,16 +536,22 @@ describe("HomePage", () => {
     await user.click(screen.getByRole("button", { name: "다음 달" }));
 
     const july = screen.getByRole("grid", { name: "2026년 7월" });
+    const julyButtons = within(july).getAllByRole("button");
 
-    expect(within(july).getAllByRole("button")).toHaveLength(35);
+    expect(julyButtons).toHaveLength(35);
+    expect(julyButtons.at(0)).toHaveAccessibleName("2026-06-28");
     expect(within(july).getByRole("button", { name: "2026-07-01 선택됨" }));
+    expect(julyButtons.at(-1)).toHaveAccessibleName("2026-08-01");
 
     await user.click(screen.getByRole("button", { name: "이전 달" }));
 
     const june = screen.getByRole("grid", { name: "2026년 6월" });
+    const juneButtons = within(june).getAllByRole("button");
 
-    expect(within(june).getAllByRole("button")).toHaveLength(35);
+    expect(juneButtons).toHaveLength(35);
+    expect(juneButtons.at(0)).toHaveAccessibleName("2026-05-31");
     expect(within(june).getByRole("button", { name: "2026-06-01 선택됨" }));
+    expect(juneButtons.at(-1)).toHaveAccessibleName("2026-07-04");
   });
 
   it("uses the AI operator panel for approval-gated changes and undo", async () => {

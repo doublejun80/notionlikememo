@@ -135,6 +135,7 @@ type CapturedItem = {
 
 const workspaceStorageKey = "nodiary.workspace.v2";
 const captureStorageKey = "nodiary.quickCapture.v1";
+const koreanWeekdayLabels = ["일", "월", "화", "수", "목", "금", "토"] as const;
 
 const aiContextScopes = [
   { id: "currentPage", label: "현재 페이지" },
@@ -219,9 +220,7 @@ export function NodiaryWorkspace() {
   const [selectedAiModelRoute, setSelectedAiModelRoute] =
     useState<AiModelRoute>("planner");
   const [quickCapture, setQuickCapture] = useState("");
-  const [capturedItems, setCapturedItems] = useState<CapturedItem[]>(() =>
-    loadStoredCaptures()
-  );
+  const [capturedItems, setCapturedItems] = useState<CapturedItem[]>([]);
   const [workspaceNotice, setWorkspaceNotice] = useState("");
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [activePageId, setActivePageId] = useState(state.activePage.id);
@@ -231,6 +230,7 @@ export function NodiaryWorkspace() {
   );
   const quickCaptureInputRef = useRef<HTMLInputElement>(null);
   const hasHydratedWorkspaceRef = useRef(false);
+  const hasLoadedCapturesRef = useRef(false);
 
   const documentWidthClass =
     state.preferences.documentWidth === "wide" ? "max-w-[900px]" : "max-w-[800px]";
@@ -331,6 +331,21 @@ export function NodiaryWorkspace() {
   }, [state]);
 
   useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      const storedCaptures = loadStoredCaptures();
+
+      hasLoadedCapturesRef.current = true;
+      setCapturedItems(storedCaptures);
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoadedCapturesRef.current) {
+      return;
+    }
+
     storeCaptures(capturedItems);
   }, [capturedItems]);
 
@@ -1305,7 +1320,7 @@ function MiniCalendar({
   return (
     <div className="mt-2 px-2">
       <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-[var(--nodiary-muted-soft)]">
-        {["월", "화", "수", "목", "금", "토", "일"].map((day) => (
+        {koreanWeekdayLabels.map((day) => (
           <div className="h-6 leading-6" key={day}>
             {day}
           </div>
@@ -2472,7 +2487,7 @@ function DatabaseCalendar({
   return (
     <div className="p-3">
       <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-[var(--nodiary-muted-soft)]">
-        {["월", "화", "수", "목", "금", "토", "일"].map((day) => (
+        {koreanWeekdayLabels.map((day) => (
           <div className="h-6 leading-6" key={day}>
             {day}
           </div>
@@ -2560,6 +2575,11 @@ function createDatabaseCalendarDays(rows: DatabaseRow[]) {
     groups[row.date] = [...(groups[row.date] ?? []), row];
     return groups;
   }, {});
+  const year = 2026;
+  const month = 6;
+  const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const cellCount = Math.ceil((firstWeekday + daysInMonth) / 7) * 7;
   const days: Array<{
     isoDate: string;
     isCurrentMonth: boolean;
@@ -2568,24 +2588,19 @@ function createDatabaseCalendarDays(rows: DatabaseRow[]) {
     rows: DatabaseRow[];
   }> = [];
 
-  for (let day = 1; day <= 30; day += 1) {
-    const isoDate = `2026-06-${String(day).padStart(2, "0")}`;
-    days.push({
-      isoDate,
-      isCurrentMonth: true,
-      isToday: isoDate === "2026-06-16",
-      label: String(day),
-      rows: rowsByDate[isoDate] ?? []
-    });
-  }
+  for (let cellIndex = 0; cellIndex < cellCount; cellIndex += 1) {
+    const date = new Date(Date.UTC(year, month - 1, 1 - firstWeekday + cellIndex));
+    const isoDate = [
+      date.getUTCFullYear(),
+      String(date.getUTCMonth() + 1).padStart(2, "0"),
+      String(date.getUTCDate()).padStart(2, "0")
+    ].join("-");
 
-  for (let day = 1; day <= 5; day += 1) {
-    const isoDate = `2026-07-${String(day).padStart(2, "0")}`;
     days.push({
       isoDate,
-      isCurrentMonth: false,
-      isToday: false,
-      label: String(day),
+      isCurrentMonth: date.getUTCMonth() === month - 1,
+      isToday: isoDate === "2026-06-16",
+      label: String(date.getUTCDate()),
       rows: rowsByDate[isoDate] ?? []
     });
   }
