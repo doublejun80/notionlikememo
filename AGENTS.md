@@ -6,9 +6,11 @@ As of 2026-06-15, the user explicitly reset the product direction from the
 older MyPlan/TODAY-centered MVP toward **Nodiary**, a Notion-like document
 workspace with AI assistance.
 
-Follow the handoff document first:
+Follow the current handoff and active plan first:
 
 - `docs/superpowers/specs/2026-06-15-nodiary-development-handoff.md`
+- `docs/2026-06-16-nodiary-next-context-handoff.md`
+- `docs/superpowers/plans/2026-06-18-nodiary-next-context-plan.md`
 
 This override supersedes older notes in this file that say AI, full
 Notion-style editing, and Google/Apple calendar integration are out of scope.
@@ -21,8 +23,11 @@ Hard product rules from the user:
 - The left sidebar must keep the full monthly calendar visible and unclipped.
 - Project management belongs inside planning notes as an insertable
   database/project block, not as the default first-screen focus.
-- AI must be a writable assistant/operator surface with approval and undo, not
-  passive suggestion cards.
+- AI must be a writable assistant/operator surface, not passive suggestion
+  cards. Current product behavior is immediate apply for local document,
+  workspace, and fixture calendar changes, with undo retained. Do not
+  reintroduce approval as the default local flow; reserve explicit approval for
+  external provider writes, destructive/bulk changes, or high-risk sync cases.
 - Do not remove or downgrade UI affordances because alignment is hard.
 - Do not replace icons, handles, or disclosure controls with crude placeholder
   CSS/text workarounds in the real product.

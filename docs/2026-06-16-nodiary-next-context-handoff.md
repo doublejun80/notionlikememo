@@ -1,16 +1,23 @@
 # Nodiary Next Context Handoff
 
 작성일: 2026-06-16
+최종 업데이트: 2026-06-18
 
 ## 현재 상태
 
 - repo: `/Volumes/mac_dock/github/notionlikememo`
 - branch: `main`
-- latest pushed commit: `c18f47a Fix Nodiary workspace remaining UX issues`
+- latest pushed code baseline: `707f4d5 Fix Nodiary AI immediate apply flow`
 - 이전 주요 commit: `958124d Build Nodiary workspace UX harness fixes`
 - `.env.local`은 ignored 상태이며 출력/커밋하지 않았음.
 - product direction: Nodiary, Notion Core Clone-lite, Electron 유지.
 - first screen rule: 프로젝트 대시보드가 아니라 `오늘의 계획` 문서 편집 화면.
+- active next-context plan:
+  `docs/superpowers/plans/2026-06-18-nodiary-next-context-plan.md`
+- current AI local behavior: document/workspace/fixture calendar changes are
+  immediate apply + undo. Older sections may mention approval proposals as
+  historical implementation notes; do not reintroduce approval as the default
+  local AI flow.
 
 ## 2026-06-17 핫픽스
 
@@ -466,11 +473,12 @@ Latest Electron QA:
 
 ## 다음 작업 추천 순서
 
-1. Slash menu 검색/필터 추가.
-2. AI drawer focus management/autofocus/focus restore를 별도 패스로 정리.
-3. 좁은 board view와 1024/1023 sidebar breakpoint UX 개선.
-4. Calendar provider-backed source abstraction을 UI/state에 연결.
-5. Google/Apple Calendar real auth/write/conflict resolver는 mocked adapter 위에 단계적으로 구현.
+1. `docs/superpowers/plans/2026-06-18-nodiary-next-context-plan.md`를 active plan으로 사용한다.
+2. Slash menu 검색/필터 추가.
+3. AI drawer focus management/autofocus/focus restore를 별도 패스로 정리.
+4. 좁은 board view와 1024/1023 sidebar breakpoint UX 개선.
+5. Calendar provider-backed source abstraction을 UI/state에 연결.
+6. Google/Apple Calendar real auth/write/conflict resolver는 mocked adapter 위에 단계적으로 구현.
 
 ## 다음 컨텍스트 시작 시 주의
 
@@ -481,8 +489,11 @@ Latest Electron QA:
   - `docs/superpowers/specs/2026-06-15-notion-ai-operator-redesign.md`
   - `docs/2026-06-16-nodiary-ux50-final-report.md`
   - `docs/2026-06-16-nodiary-next-context-handoff.md`
+  - `docs/superpowers/plans/2026-06-18-nodiary-next-context-plan.md`
 - `.env.local` 출력/커밋 금지.
 - 첫 화면을 프로젝트 DB로 바꾸지 말 것.
 - Electron 유지, Tauri 전환 금지.
 - icons/handles는 lucide-react 기반 유지.
+- AI local document/workspace/calendar 변경은 현재 기본값이 즉시 적용 + undo다. 일반 작업에 승인 큐를 다시 기본으로 만들지 말 것.
+- 중앙 문서에는 AI 실행 기록, raw JSON, diff, code block을 쓰지 말고 사용자가 원한 본문만 남길 것.
 - 화면 QA 없이 완료 주장 금지.
