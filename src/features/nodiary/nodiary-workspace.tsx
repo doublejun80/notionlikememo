@@ -62,6 +62,7 @@ import {
   defaultNodiaryState,
   deleteBlock,
   deletePage,
+  getNodiaryTodayIsoDate,
   getDatabaseRowsForView,
   insertBlockFromSlash,
   insertParagraphBlock,
@@ -70,6 +71,7 @@ import {
   moveDatabaseRow,
   movePageNode,
   movePageNodeByKeyboard,
+  prepareWorkspaceForStartup,
   rejectAiAction,
   renamePage,
   requestCalendarEventMove,
@@ -208,8 +210,14 @@ const workspaceThemeOptions: NodiaryState["preferences"]["theme"][] = [
   "navy"
 ];
 
-export function NodiaryWorkspace() {
-  const [state, setState] = useState(() => defaultNodiaryState());
+export function NodiaryWorkspace({
+  todayIsoDate = getNodiaryTodayIsoDate()
+}: {
+  todayIsoDate?: string;
+} = {}) {
+  const [state, setState] = useState(() =>
+    defaultNodiaryState({ todayIsoDate })
+  );
   const [isMobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [isSlashOpen, setSlashOpen] = useState(false);
   const [slashAnchorBlockId, setSlashAnchorBlockId] = useState("memo-body");
@@ -289,7 +297,10 @@ export function NodiaryWorkspace() {
         }
 
         const payload = (await response.json()) as { state?: unknown };
-        const hydratedState = readHydratedWorkspaceState(payload.state);
+        const hydratedState = readHydratedWorkspaceState(
+          payload.state,
+          todayIsoDate
+        );
 
         if (!hydratedState) {
           throw new Error("Workspace API returned invalid state");
@@ -300,7 +311,7 @@ export function NodiaryWorkspace() {
         }
       } catch {
         if (!isCancelled) {
-          applyHydratedState(loadStoredWorkspaceState());
+          applyHydratedState(loadStoredWorkspaceState(todayIsoDate));
         }
       } finally {
         if (!isCancelled) {
@@ -314,7 +325,7 @@ export function NodiaryWorkspace() {
     return () => {
       isCancelled = true;
     };
-  }, []);
+  }, [todayIsoDate]);
 
   useEffect(() => {
     storeWorkspaceState(state);
@@ -585,6 +596,7 @@ export function NodiaryWorkspace() {
         quickCaptureInputRef={quickCaptureInputRef}
         quickCapture={quickCapture}
         state={state}
+        todayIsoDate={todayIsoDate}
         workspaceNotice={workspaceNotice}
       />
 
@@ -667,6 +679,7 @@ export function NodiaryWorkspace() {
             pageProperties={state.activePage.properties}
             pageTitle={state.activePage.title}
             slashOpen={isSlashOpen}
+            todayIsoDate={todayIsoDate}
           />
         </main>
       </div>
@@ -768,6 +781,7 @@ export function NodiaryWorkspace() {
             quickCaptureInputRef={quickCaptureInputRef}
             quickCapture={quickCapture}
             state={state}
+            todayIsoDate={todayIsoDate}
             workspaceNotice={workspaceNotice}
           />
         </div>
@@ -819,6 +833,7 @@ type SidebarProps = {
   quickCapture: string;
   quickCaptureInputRef: RefObject<HTMLInputElement | null>;
   state: ReturnType<typeof defaultNodiaryState>;
+  todayIsoDate: string;
   onCalendarDateSelect: (isoDate: string) => void;
   onCalendarEventMove: (eventId: string, isoDate: string) => void;
   onCalendarMonthChange: (direction: "previous" | "next") => void;
@@ -865,6 +880,7 @@ function NodiarySidebar({
   onTogglePageExpanded,
   quickCapture,
   quickCaptureInputRef,
+  todayIsoDate,
   workspaceNotice,
   state
 }: SidebarProps) {
@@ -944,8 +960,9 @@ function NodiarySidebar({
                 <ChevronLeft className="h-4 w-4" aria-hidden="true" />
               </button>
               <button
+                aria-label="오늘"
                 className="h-8 rounded px-2 text-[12px] font-medium text-[var(--nodiary-muted)] hover:bg-[var(--nodiary-hover)]"
-                onClick={() => onCalendarDateSelect("2026-06-16")}
+                onClick={() => onCalendarDateSelect(todayIsoDate)}
                 type="button"
               >
                 오늘
@@ -1473,7 +1490,8 @@ function DocumentCanvas({
   onUpdatePageTitle,
   onUpdateTodo,
   pageProperties,
-  pageTitle
+  pageTitle,
+  todayIsoDate
 }: {
   blocks: NodiaryBlock[];
   documentWidthClass: string;
@@ -1481,6 +1499,7 @@ function DocumentCanvas({
   pageProperties: ReturnType<typeof defaultNodiaryState>["activePage"]["properties"];
   pageTitle: string;
   slashOpen: boolean;
+  todayIsoDate: string;
   onAddDatabaseRow: (databaseBlockId: string) => void;
   onDeleteBlock: (blockId: string) => void;
   onMoveBlockByKeyboard: (blockId: string, direction: "up" | "down") => void;
@@ -1552,6 +1571,7 @@ function DocumentCanvas({
             onUpdateBlockText={onUpdateBlockText}
             onUpdateBlockTitle={onUpdateBlockTitle}
             onUpdateTodo={onUpdateTodo}
+            todayIsoDate={todayIsoDate}
           />
         ))}
       </div>
@@ -1601,7 +1621,8 @@ function DocumentBlock({
   onUpdateDatabaseSort,
   onUpdateBlockText,
   onUpdateBlockTitle,
-  onUpdateTodo
+  onUpdateTodo,
+  todayIsoDate
 }: {
   block: NodiaryBlock;
   onAddDatabaseRow: (databaseBlockId: string) => void;
@@ -1631,6 +1652,7 @@ function DocumentBlock({
     blockId: string,
     patch: Parameters<typeof updateTodoBlock>[2]
   ) => void;
+  todayIsoDate: string;
 }) {
   return (
     <div
@@ -1740,6 +1762,7 @@ function DocumentBlock({
             onUpdateField={onUpdateDatabaseField}
             onUpdateFilter={onUpdateDatabaseFilter}
             onUpdateSort={onUpdateDatabaseSort}
+            todayIsoDate={todayIsoDate}
           />
         ) : null}
         {block.type === "ai" ? (
@@ -1969,7 +1992,8 @@ function DatabaseViewBlock({
   onSwitchView,
   onUpdateField,
   onUpdateFilter,
-  onUpdateSort
+  onUpdateSort,
+  todayIsoDate
 }: {
   blockId: string;
   database: DatabaseBlock;
@@ -1990,6 +2014,7 @@ function DatabaseViewBlock({
     patch: Partial<DatabaseFilter>
   ) => void;
   onUpdateSort: (databaseBlockId: string, sort: DatabaseSort) => void;
+  todayIsoDate: string;
 }) {
   const [isFieldEditorOpen, setFieldEditorOpen] = useState(false);
   const visibleRows = useMemo(() => getDatabaseRowsForView(database), [database]);
@@ -2183,6 +2208,7 @@ function DatabaseViewBlock({
           database={database}
           onMoveRow={onMoveRow}
           rows={visibleRows}
+          todayIsoDate={todayIsoDate}
         />
       ) : null}
     </section>
@@ -2480,7 +2506,8 @@ function DatabaseCalendar({
   blockId,
   database,
   onMoveRow,
-  rows
+  rows,
+  todayIsoDate
 }: {
   blockId: string;
   database: DatabaseBlock;
@@ -2490,8 +2517,12 @@ function DatabaseCalendar({
     patch: Parameters<typeof moveDatabaseRow>[3]
   ) => void;
   rows: DatabaseRow[];
+  todayIsoDate: string;
 }) {
-  const days = useMemo(() => createDatabaseCalendarDays(rows), [rows]);
+  const days = useMemo(
+    () => createDatabaseCalendarDays(rows, todayIsoDate),
+    [rows, todayIsoDate]
+  );
 
   return (
     <div className="p-3">
@@ -2579,7 +2610,7 @@ function DatabaseCalendar({
   );
 }
 
-function createDatabaseCalendarDays(rows: DatabaseRow[]) {
+function createDatabaseCalendarDays(rows: DatabaseRow[], todayIsoDate: string) {
   const rowsByDate = rows.reduce<Record<string, DatabaseRow[]>>((groups, row) => {
     groups[row.date] = [...(groups[row.date] ?? []), row];
     return groups;
@@ -2608,7 +2639,7 @@ function createDatabaseCalendarDays(rows: DatabaseRow[]) {
     days.push({
       isoDate,
       isCurrentMonth: date.getUTCMonth() === month - 1,
-      isToday: isoDate === "2026-06-16",
+      isToday: isoDate === todayIsoDate,
       label: String(date.getUTCDate()),
       rows: rowsByDate[isoDate] ?? []
     });
@@ -3427,8 +3458,8 @@ function getThemePalette(
   return lightPalette;
 }
 
-function loadStoredWorkspaceState(): NodiaryState {
-  const fallback = defaultNodiaryState();
+function loadStoredWorkspaceState(todayIsoDate: string): NodiaryState {
+  const fallback = defaultNodiaryState({ todayIsoDate });
 
   if (typeof window === "undefined") {
     return fallback;
@@ -3441,18 +3472,21 @@ function loadStoredWorkspaceState(): NodiaryState {
       return fallback;
     }
 
-    return readHydratedWorkspaceState(JSON.parse(rawValue)) ?? fallback;
+    return readHydratedWorkspaceState(JSON.parse(rawValue), todayIsoDate) ?? fallback;
   } catch {
     return fallback;
   }
 }
 
-function readHydratedWorkspaceState(value: unknown): NodiaryState | undefined {
+function readHydratedWorkspaceState(
+  value: unknown,
+  todayIsoDate: string
+): NodiaryState | undefined {
   if (!isRecord(value)) {
     return undefined;
   }
 
-  const fallback = defaultNodiaryState();
+  const fallback = defaultNodiaryState({ todayIsoDate });
   const stored = value as Partial<NodiaryState>;
 
   if (!isRecord(stored.activePage) || !Array.isArray(stored.activePage.blocks)) {
@@ -3464,7 +3498,7 @@ function readHydratedWorkspaceState(value: unknown): NodiaryState | undefined {
     ...stored.activePage
   };
 
-  return {
+  return prepareWorkspaceForStartup({
     ...fallback,
     ...stored,
     workspace: {
@@ -3510,7 +3544,7 @@ function readHydratedWorkspaceState(value: unknown): NodiaryState | undefined {
       ...fallback.preferences,
       ...(isRecord(stored.preferences) ? stored.preferences : {})
     }
-  };
+  }, todayIsoDate);
 }
 
 function storeWorkspaceState(state: NodiaryState) {

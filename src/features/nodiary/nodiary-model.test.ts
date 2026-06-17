@@ -11,6 +11,7 @@ import {
   deleteBlock,
   deletePage,
   getDatabaseRowsForView,
+  getKoreanTodayIsoDate,
   insertBlockFromSlash,
   moveBlock,
   moveBlockByKeyboard,
@@ -18,6 +19,7 @@ import {
   moveDatabaseRow,
   movePageNode,
   movePageNodeByKeyboard,
+  prepareWorkspaceForStartup,
   rejectAiAction,
   renamePage,
   requestCalendarEventMove,
@@ -33,6 +35,59 @@ import {
 } from "./nodiary-model";
 
 describe("nodiary model", () => {
+  it("resolves today from the Korea timezone instead of UTC", () => {
+    expect(getKoreanTodayIsoDate(new Date("2026-06-16T14:59:59.000Z"))).toBe(
+      "2026-06-16"
+    );
+    expect(getKoreanTodayIsoDate(new Date("2026-06-16T15:00:00.000Z"))).toBe(
+      "2026-06-17"
+    );
+  });
+
+  it("can start the workspace on the current Korea date", () => {
+    const state = defaultNodiaryState({ todayIsoDate: "2026-06-17" });
+
+    expect(state.sidebarCalendar.selectedDate).toBe("2026-06-17");
+    expect(
+      state.sidebarCalendar.days.find((day) => day.isoDate === "2026-06-17")
+    ).toMatchObject({
+      isSelected: true,
+      isToday: true
+    });
+    expect(state.activePage.properties.find((property) => property.label === "날짜")).toMatchObject({
+      value: "2026년 6월 17일 수요일"
+    });
+  });
+
+  it("refreshes stale saved calendar state when startup page is today", () => {
+    const staleState = defaultNodiaryState({ todayIsoDate: "2026-06-16" });
+    const refreshed = prepareWorkspaceForStartup(staleState, "2026-06-17");
+
+    expect(refreshed.activePage.id).toBe("today");
+    expect(refreshed.sidebarCalendar.selectedDate).toBe("2026-06-17");
+    expect(
+      refreshed.sidebarCalendar.days.find((day) => day.isoDate === "2026-06-17")
+    ).toMatchObject({
+      isSelected: true,
+      isToday: true
+    });
+    expect(refreshed.activePage.properties.find((property) => property.label === "날짜")).toMatchObject({
+      value: "2026년 6월 17일 수요일"
+    });
+  });
+
+  it("keeps the saved calendar date when startup page is last", () => {
+    const staleState = updatePreference(
+      defaultNodiaryState({ todayIsoDate: "2026-06-16" }),
+      {
+        startupPage: "last"
+      }
+    );
+    const refreshed = prepareWorkspaceForStartup(staleState, "2026-06-17");
+
+    expect(refreshed.sidebarCalendar.selectedDate).toBe("2026-06-16");
+  });
+
   it("starts as a document-first workspace with no project database on the first screen", () => {
     const state = defaultNodiaryState();
 

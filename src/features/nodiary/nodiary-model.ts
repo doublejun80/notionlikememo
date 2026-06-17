@@ -180,6 +180,44 @@ export type NodiaryState = {
   preferences: AppPreference;
 };
 
+type DefaultNodiaryStateOptions = {
+  todayIsoDate?: string;
+};
+
+const koreanWeekdayLabels = ["일", "월", "화", "수", "목", "금", "토"] as const;
+const koreanTimeZone = "Asia/Seoul";
+
+export function getKoreanTodayIsoDate(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: koreanTimeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(now);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  if (!year || !month || !day) {
+    return "2026-06-16";
+  }
+
+  return `${year}-${month}-${day}`;
+}
+
+export function getNodiaryTodayIsoDate() {
+  return readTodayIsoDateOverride() ?? getKoreanTodayIsoDate();
+}
+
+function readTodayIsoDateOverride() {
+  const value = (globalThis as { __NODIARY_TODAY_ISO_DATE__?: unknown })
+    .__NODIARY_TODAY_ISO_DATE__;
+
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? value
+    : undefined;
+}
+
 export type OperatorPlanDraft = {
   summary: string;
   actions: Array<{
@@ -242,8 +280,11 @@ const projectDatabase: DatabaseBlock = {
   ]
 };
 
-export function defaultNodiaryState(): NodiaryState {
-  const activePage = createTodayPage();
+export function defaultNodiaryState(
+  options: DefaultNodiaryStateOptions = {}
+): NodiaryState {
+  const todayIsoDate = options.todayIsoDate ?? getNodiaryTodayIsoDate();
+  const activePage = createTodayPage(todayIsoDate);
 
   return {
     workspace: {
@@ -277,7 +318,12 @@ export function defaultNodiaryState(): NodiaryState {
       [activePage.id]: activePage
     },
     activePage,
-    sidebarCalendar: buildSidebarCalendar("2026-06", "2026-06-16"),
+    sidebarCalendar: buildSidebarCalendar(
+      todayIsoDate.slice(0, 7),
+      todayIsoDate,
+      {},
+      todayIsoDate
+    ),
     ai: {
       panelInput: "",
       runs: [],
@@ -309,13 +355,13 @@ export function defaultNodiaryState(): NodiaryState {
   };
 }
 
-function createTodayPage(): NodiaryPage {
+function createTodayPage(todayIsoDate: string): NodiaryPage {
   return {
     id: "today",
     title: "오늘의 계획",
     properties: [
       { label: "상태", value: "진행중" },
-      { label: "날짜", value: "2026년 6월 16일 화요일" },
+      { label: "날짜", value: formatKoreanDateLabel(todayIsoDate) },
       { label: "캘린더", value: "왼쪽 미니 캘린더와 연결" }
     ],
     blocks: [
@@ -1437,6 +1483,67 @@ export function updatePreference(
   };
 }
 
+export function prepareWorkspaceForStartup(
+  state: NodiaryState,
+  todayIsoDate = getNodiaryTodayIsoDate()
+): NodiaryState {
+  const pages = getStatePages(state);
+  const todayPage = updatePageDateProperty(
+    pages.today ?? createTodayPage(todayIsoDate),
+    todayIsoDate
+  );
+  const pagesWithToday = {
+    ...pages,
+    [todayPage.id]: todayPage
+  };
+  const shouldStartToday = state.preferences.startupPage === "today";
+  const selectedDate = shouldStartToday
+    ? todayIsoDate
+    : state.sidebarCalendar.selectedDate;
+  const visibleMonth = shouldStartToday
+    ? todayIsoDate.slice(0, 7)
+    : state.sidebarCalendar.visibleMonth ?? selectedDate.slice(0, 7);
+
+  return {
+    ...state,
+    pages: pagesWithToday,
+    activePage: shouldStartToday
+      ? todayPage
+      : state.activePage.id === todayPage.id
+        ? todayPage
+        : state.activePage,
+    sidebarCalendar: buildSidebarCalendar(
+      visibleMonth,
+      selectedDate,
+      state.sidebarCalendar.movedEvents,
+      todayIsoDate
+    )
+  };
+}
+
+function updatePageDateProperty(page: NodiaryPage, todayIsoDate: string): NodiaryPage {
+  const dateLabel = formatKoreanDateLabel(todayIsoDate);
+  let hasDateProperty = false;
+  const properties = page.properties.map((property) => {
+    if (property.label !== "날짜") {
+      return property;
+    }
+
+    hasDateProperty = true;
+    return {
+      ...property,
+      value: dateLabel
+    };
+  });
+
+  return {
+    ...page,
+    properties: hasDateProperty
+      ? properties
+      : [...properties, { label: "날짜", value: dateLabel }]
+  };
+}
+
 function createBlockFromSlash(
   insertType: SlashInsertType,
   state: NodiaryState
@@ -1541,14 +1648,18 @@ function withActivePage(
   };
 }
 
-const TODAY_ISO_DATE = "2026-06-16";
-
 function buildSidebarCalendar(
   visibleMonth: string,
   selectedDate: string,
-  movedEvents: Record<string, CalendarEvent> = {}
+  movedEvents: Record<string, CalendarEvent> = {},
+  todayIsoDate = getNodiaryTodayIsoDate()
 ): SidebarCalendar {
-  const days = buildCalendarDays(visibleMonth, selectedDate, movedEvents);
+  const days = buildCalendarDays(
+    visibleMonth,
+    selectedDate,
+    movedEvents,
+    todayIsoDate
+  );
 
   return {
     visibleMonth,
@@ -1573,7 +1684,8 @@ function buildSidebarCalendar(
 function buildCalendarDays(
   visibleMonth: string,
   selectedDate: string,
-  movedEvents: Record<string, CalendarEvent>
+  movedEvents: Record<string, CalendarEvent>,
+  todayIsoDate: string
 ): CalendarDay[] {
   const [year, month] = parseMonthKey(visibleMonth);
   const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
@@ -1598,7 +1710,7 @@ function buildCalendarDays(
       id: isoDate,
       label: String(date.getUTCDate()),
       isoDate,
-      isToday: isoDate === TODAY_ISO_DATE,
+      isToday: isoDate === todayIsoDate,
       isSelected: isoDate === selectedDate,
       hasEvent: getScheduleForCalendar(calendar, isoDate).length > 0
     });
@@ -1617,6 +1729,14 @@ function formatMonthLabel(visibleMonth: string) {
   const [year, month] = parseMonthKey(visibleMonth);
 
   return `${year}년 ${month}월`;
+}
+
+function formatKoreanDateLabel(isoDate: string) {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const weekday = koreanWeekdayLabels[date.getUTCDay()] ?? "일";
+
+  return `${year}년 ${month}월 ${day}일 ${weekday}요일`;
 }
 
 function formatIsoDate(date: Date) {

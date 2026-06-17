@@ -83,6 +83,29 @@ describe("HomePage", () => {
     expect(screen.getByText("제품 기획서 정리")).toBeInTheDocument();
   });
 
+  it("uses the Korea today date for the initial calendar and today button", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage todayIsoDate="2026-06-17" />);
+
+    const june = screen.getByRole("grid", { name: "2026년 6월" });
+
+    expect(within(june).getByRole("button", { name: "2026-06-17 선택됨" }));
+    expect(
+      screen.getByText("2026년 6월 17일 수요일")
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "다음 달" }));
+    expect(screen.getByRole("grid", { name: "2026년 7월" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "오늘" }));
+
+    const returnedJune = screen.getByRole("grid", { name: "2026년 6월" });
+    expect(
+      within(returnedJune).getByRole("button", { name: "2026-06-17 선택됨" })
+    ).toBeInTheDocument();
+  });
+
   it("uses centered row geometry for sidebar schedule items and callouts", () => {
     render(<HomePage />);
 

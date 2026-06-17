@@ -50,6 +50,30 @@
   - `/tmp/nodiary-centered-row-qa.png`
   - `/tmp/nodiary-centered-row-electron-qa.png`
 
+## 2026-06-17 한국 날짜 핫픽스
+
+- `TODAY_ISO_DATE = "2026-06-16"` 고정값을 제거하고, `Asia/Seoul` 기준으로 오늘 날짜를 계산하도록 변경했다.
+- `/` route를 `force-dynamic`으로 바꿔 build 시점의 날짜가 static HTML에 박제되지 않게 했다.
+- `startupPage: today`일 때 저장된 workspace가 예전 `selectedDate`를 가지고 있어도 앱 시작 시 한국 오늘 날짜로 sidebar calendar와 오늘 페이지 날짜 속성을 보정한다.
+- `startupPage: last`일 때는 저장된 calendar 선택 날짜를 유지하되 today marker는 현재 한국 날짜 기준으로 다시 계산한다.
+- sidebar “오늘” 버튼은 더 이상 `2026-06-16` 하드코딩이 아니라 현재 app start의 한국 오늘 날짜를 선택한다.
+- database calendar의 today highlight도 같은 `todayIsoDate`를 사용한다.
+- regression test 추가:
+  - UTC 2026-06-16 15:00이 한국 날짜 2026-06-17로 계산되는지 확인.
+  - 기본 workspace가 명시된 한국 오늘 날짜로 시작하는지 확인.
+  - stale saved workspace가 `startupPage: today`이면 17일로 보정되는지 확인.
+  - UI에서 17일 시작 및 “오늘” 버튼 복귀를 확인.
+- 검증:
+  - `npm test`: 13 files, 104 tests passed.
+  - `npm run typecheck`: passed.
+  - `npm run lint`: passed.
+  - `npm run build`: passed, `/` route is dynamic (`ƒ /`).
+  - Playwright Chromium QA: stale 2026-06-16 localStorage 주입 후 reload해도 selected/current/date property 모두 2026-06-17.
+  - Playwright Electron QA: 동일 stale workspace 재현 후 2026-06-17 보정, console/page error 0.
+- QA screenshots outside repo:
+  - `/tmp/nodiary-kst-today-chromium-qa.png`
+  - `/tmp/nodiary-kst-today-electron-qa.png`
+
 ## 최신 핫픽스
 
 - OpenAI operator 연결 실패의 실제 원인은 Responses API strict schema가 object형 `argsJson`/`diffJson`/`undoJson`을 거부한 것이었다. 해당 필드를 JSON string contract로 바꾸고, 서버 파서에서 JSON string을 다시 record로 복원하게 수정했다.
