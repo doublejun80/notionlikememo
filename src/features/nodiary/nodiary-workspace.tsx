@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AlertCircle,
   Bot,
   CalendarDays,
   Check,
@@ -14,6 +15,7 @@ import {
   FileText,
   GripVertical,
   Inbox,
+  Loader2,
   Menu,
   MessageSquareText,
   MoreHorizontal,
@@ -135,6 +137,24 @@ type CapturedItem = {
   createdLabel: string;
 };
 
+type AiRequestStatus = {
+  command: string;
+  message?: string;
+  modelName: string;
+  modelRoute: AiModelRoute;
+  status: "reading" | "error";
+};
+
+type AiContextSnapshot = {
+  calendarContext?: {
+    selectedDate: string;
+    schedule: NodiaryState["sidebarCalendar"]["schedule"];
+  };
+  memory: string[];
+  pageTitle: string;
+  selectedText: string;
+};
+
 const workspaceStorageKey = "nodiary.workspace.v2";
 const captureStorageKey = "nodiary.quickCapture.v1";
 const koreanWeekdayLabels = ["일", "월", "화", "수", "목", "금", "토"] as const;
@@ -225,6 +245,9 @@ export function NodiaryWorkspace({
   const [isAiPanelOpen, setAiPanelOpen] = useState(false);
   const [aiInput, setAiInput] = useState("");
   const [aiNotice, setAiNotice] = useState("");
+  const [aiRequestStatus, setAiRequestStatus] = useState<AiRequestStatus | null>(
+    null
+  );
   const [selectedAiModelRoute, setSelectedAiModelRoute] =
     useState<AiModelRoute>("planner");
   const [quickCapture, setQuickCapture] = useState("");
@@ -466,21 +489,30 @@ export function NodiaryWorkspace({
       return;
     }
 
+    const modelOption = getAiModelOption(selectedAiModelRoute);
+    const contextSnapshot = buildAiContextSnapshot(state, enabledAiScopes);
+
     setAiInput("");
+    setAiNotice("");
+    setAiRequestStatus({
+      command,
+      modelName: modelOption.modelName,
+      modelRoute: selectedAiModelRoute,
+      status: "reading"
+    });
 
     if (!hasPendingAiRequestBlock(state) && shouldAnswerDirectly(command)) {
-      const modelOption = getAiModelOption(selectedAiModelRoute);
-
-      setAiNotice("");
+      await Promise.resolve();
       setState((current) =>
         createAiAnswerRun(
           current,
           command,
-          createLocalAiAnswer(command, selectedAiModelRoute),
+          createLocalAiAnswer(command, selectedAiModelRoute, contextSnapshot),
           selectedAiModelRoute,
           modelOption.modelName
         )
       );
+      setAiRequestStatus(null);
       return;
     }
 
@@ -494,21 +526,10 @@ export function NodiaryWorkspace({
         body: JSON.stringify({
           command,
           modelRoute: selectedAiModelRoute,
-          pageTitle: enabledAiScopes.includes("currentPage")
-            ? state.activePage.title
-            : "Nodiary",
-          selectedText: enabledAiScopes.includes("selectedBlock")
-            ? getSelectedBlockContext(state)
-            : "",
-          memory: enabledAiScopes.includes("longTermMemory")
-            ? state.ai.memories.map((memory) => memory.content)
-            : [],
-          calendarContext: enabledAiScopes.includes("sidebarCalendar")
-            ? {
-                selectedDate: state.sidebarCalendar.selectedDate,
-                schedule: state.sidebarCalendar.schedule
-              }
-            : undefined
+          pageTitle: contextSnapshot.pageTitle,
+          selectedText: contextSnapshot.selectedText,
+          memory: contextSnapshot.memory,
+          calendarContext: contextSnapshot.calendarContext
         })
       });
 
@@ -535,12 +556,32 @@ export function NodiaryWorkspace({
           payload.model ?? getAiModelOption(selectedAiModelRoute).modelName
         )
       );
+      setAiRequestStatus(null);
     } catch {
-      setAiNotice("OpenAI 연결에 실패해 로컬 초안으로 승인 큐를 만들었습니다.");
+      const message = "AI 연결에 실패했습니다. 로컬 초안으로 대체 제안을 만들었습니다.";
+
+      setAiNotice(message);
+      setAiRequestStatus({
+        command,
+        message,
+        modelName: "로컬 초안",
+        modelRoute: selectedAiModelRoute,
+        status: "error"
+      });
       setState((current) =>
         createAiRun(current, command, selectedAiModelRoute, "로컬 초안")
       );
     }
+  }
+
+  function approvePendingAiAction(actionId: string) {
+    setAiRequestStatus(null);
+    setState((current) => approveAiAction(current, actionId));
+  }
+
+  function rejectPendingAiAction(actionId: string) {
+    setAiRequestStatus(null);
+    setState((current) => rejectAiAction(current, actionId));
   }
 
   return (
@@ -695,17 +736,14 @@ export function NodiaryWorkspace({
           <AiOperatorPanel
             className="fixed inset-y-0 right-0 z-50 block w-[min(380px,calc(100vw-24px))] shadow-[0_20px_70px_rgba(36,33,29,0.2)] xl:static xl:z-auto xl:block xl:w-[360px] xl:shadow-none"
             aiInput={aiInput}
+            requestStatus={aiRequestStatus}
             aiState={state.ai}
             enabledScopes={enabledAiScopes}
             notice={aiNotice}
-            onApprove={(actionId) =>
-              setState((current) => approveAiAction(current, actionId))
-            }
+            onApprove={approvePendingAiAction}
             onChangeAiInput={setAiInput}
             onChangeModelRoute={setSelectedAiModelRoute}
-            onReject={(actionId) =>
-              setState((current) => rejectAiAction(current, actionId))
-            }
+            onReject={rejectPendingAiAction}
             onClose={() => setAiPanelOpen(false)}
             onSend={sendAiCommand}
             onToggleScope={(scope) =>
@@ -2692,6 +2730,7 @@ function AiOperatorPanel({
   onChangeModelRoute,
   onClose,
   onReject,
+  requestStatus,
   onSend,
   onToggleScope,
   onUndo,
@@ -2707,6 +2746,7 @@ function AiOperatorPanel({
   onChangeModelRoute: (route: AiModelRoute) => void;
   onClose: () => void;
   onReject: (actionId: string) => void;
+  requestStatus: AiRequestStatus | null;
   onSend: () => void;
   onToggleScope: (scope: AiContextScope) => void;
   onUndo: () => void;
@@ -2823,7 +2863,9 @@ function AiOperatorPanel({
 
       <section className="mt-4 rounded-md border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-3 py-3">
         <div className="flex items-center justify-between">
-          <div className="text-[13px] font-semibold text-[var(--nodiary-text)]">답변 및 승인 대기</div>
+          <div className="text-[13px] font-semibold text-[var(--nodiary-text)]">
+            답변 및 승인 대기
+          </div>
           <button
             className="flex h-7 items-center gap-1 rounded px-2 text-[12px] text-[var(--nodiary-muted)] hover:bg-[var(--nodiary-hover)]"
             disabled={aiState.undoLog.length === 0}
@@ -2835,8 +2877,59 @@ function AiOperatorPanel({
           </button>
         </div>
         <div className="mt-3 space-y-3">
+          {requestStatus?.status === "reading" ? (
+            <article
+              aria-label="AI가 읽는 중"
+              className="rounded border border-[var(--nodiary-border-strong)] p-3"
+              role="status"
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <Loader2
+                  aria-hidden="true"
+                  className="h-4 w-4 shrink-0 animate-spin text-[var(--nodiary-accent)]"
+                  data-testid="ai-reading-icon"
+                />
+                <div
+                  className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--nodiary-text)]"
+                  title={requestStatus.command}
+                >
+                  {requestStatus.command}
+                </div>
+              </div>
+              <div className="mt-2 text-[12px] leading-5 text-[var(--nodiary-muted-soft)]">
+                선택한 컨텍스트를 읽는 중입니다. 모델: {requestStatus.modelName}
+              </div>
+            </article>
+          ) : null}
+          {requestStatus?.status === "error" ? (
+            <article
+              aria-label="AI 요청 실패"
+              className="rounded border border-[var(--nodiary-warning-border)] bg-[var(--nodiary-warning-bg)] p-3"
+              role="alert"
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <AlertCircle
+                  aria-hidden="true"
+                  className="h-4 w-4 shrink-0 text-[var(--nodiary-warning-text)]"
+                />
+                <div
+                  className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--nodiary-warning-text)]"
+                  title={requestStatus.command}
+                >
+                  {requestStatus.command}
+                </div>
+              </div>
+              <div className="mt-2 text-[12px] leading-5 text-[var(--nodiary-warning-text)]">
+                {requestStatus.message ?? "AI 요청에 실패했습니다."} 모델:{" "}
+                {requestStatus.modelName}
+              </div>
+            </article>
+          ) : null}
           {answerRuns.map((run) => (
-            <article className="rounded border border-[var(--nodiary-border-strong)] p-3" key={run.id}>
+            <article
+              className="rounded border border-[var(--nodiary-border-strong)] p-3"
+              key={run.id}
+            >
               <div className="flex items-center justify-between gap-2">
                 <div className="text-[12px] font-semibold text-[var(--nodiary-accent)]">
                   AI 답변
@@ -2845,18 +2938,22 @@ function AiOperatorPanel({
                   모델: {run.modelName ?? getAiModelOption(run.modelRoute).modelName}
                 </span>
               </div>
+              <AiCommandLine command={run.command} />
               <p className="mt-2 text-[13px] leading-6 text-[var(--nodiary-text-strong)]">
                 {run.answer}
               </p>
             </article>
           ))}
-          {pendingActions.length === 0 && answerRuns.length === 0 ? (
+          {pendingActions.length === 0 && answerRuns.length === 0 && !requestStatus ? (
             <div className="rounded border border-dashed border-[var(--nodiary-border-strong)] px-3 py-4 text-[12px] leading-5 text-[var(--nodiary-muted-soft)]">
               질문은 답변으로 남기고, 문서 변경안과 일정 변경안은 승인 큐로 올립니다.
             </div>
           ) : null}
           {pendingActions.map((action) => (
-            <article className="rounded border border-[var(--nodiary-border-strong)] p-3" key={action.id}>
+            <article
+              className="rounded border border-[var(--nodiary-border-strong)] p-3"
+              key={action.id}
+            >
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <div className="text-[12px] font-semibold text-[var(--nodiary-accent)]">
@@ -2873,6 +2970,7 @@ function AiOperatorPanel({
                   {getRiskLabel(action.riskLevel)}
                 </span>
               </div>
+              <AiCommandLine command={action.runCommand} />
               <div className="mt-3 rounded bg-[var(--nodiary-panel-muted)] px-3 py-2 text-[12px] leading-5 text-[var(--nodiary-text-strong)]">
                 <div className="mb-1 font-semibold text-[var(--nodiary-muted)]">
                   승인하면 적용되는 내용
@@ -2915,6 +3013,17 @@ function AiOperatorPanel({
       </section>
 
     </aside>
+  );
+}
+
+function AiCommandLine({ command }: { command: string }) {
+  return (
+    <div className="mt-2 flex min-w-0 items-center gap-2 rounded bg-[var(--nodiary-panel-muted)] px-2 py-1 text-[12px] text-[var(--nodiary-muted)]">
+      <span className="shrink-0 font-medium">질문</span>
+      <span className="min-w-0 flex-1 truncate" title={command}>
+        {command}
+      </span>
+    </div>
   );
 }
 
@@ -3593,6 +3702,29 @@ function storeCaptures(items: CapturedItem[]) {
   }
 }
 
+function buildAiContextSnapshot(
+  state: NodiaryState,
+  enabledScopes: AiContextScope[]
+): AiContextSnapshot {
+  return {
+    pageTitle: enabledScopes.includes("currentPage")
+      ? state.activePage.title
+      : "Nodiary",
+    selectedText: enabledScopes.includes("selectedBlock")
+      ? getSelectedBlockContext(state)
+      : "",
+    memory: enabledScopes.includes("longTermMemory")
+      ? state.ai.memories.map((memory) => memory.content)
+      : [],
+    calendarContext: enabledScopes.includes("sidebarCalendar")
+      ? {
+          selectedDate: state.sidebarCalendar.selectedDate,
+          schedule: state.sidebarCalendar.schedule
+        }
+      : undefined
+  };
+}
+
 function getSelectedBlockContext(state: NodiaryState) {
   const selectedBlock =
     findPendingAiRequestBlock(state) ??
@@ -3639,15 +3771,56 @@ function shouldAnswerDirectly(command: string) {
     return false;
   }
 
-  return (
-    normalized.includes("?") ||
-    ["모델", "의도", "왜", "뭐", "무엇", "어떤", "정의", "설명", "답변", "대답"].some((token) =>
+  if (normalized.includes("?")) {
+    return true;
+  }
+
+  if (isMutatingAiCommand(normalized)) {
+    return false;
+  }
+
+  if (
+    ["모델", "의도", "왜", "뭐", "무엇", "어떤", "정의", "뜻", "설명", "요약", "알려", "답변", "대답"].some((token) =>
       normalized.includes(token)
     )
-  );
+  ) {
+    return true;
+  }
+
+  return !normalized.includes("\n") && normalized.length <= 20;
 }
 
-function createLocalAiAnswer(command: string, modelRoute: AiModelRoute) {
+function isMutatingAiCommand(command: string) {
+  return [
+    "추가",
+    "넣어",
+    "작성",
+    "만들",
+    "바꿔",
+    "변경",
+    "수정",
+    "편집",
+    "교체",
+    "삭제",
+    "지워",
+    "없애",
+    "정리",
+    "다듬",
+    "옮겨",
+    "이동",
+    "미뤄",
+    "당겨",
+    "반영",
+    "체크",
+    "완료"
+  ].some((token) => command.includes(token));
+}
+
+function createLocalAiAnswer(
+  command: string,
+  modelRoute: AiModelRoute,
+  context: AiContextSnapshot
+) {
   const modelOption = getAiModelOption(modelRoute);
 
   if (command.includes("모델")) {
@@ -3658,11 +3831,61 @@ function createLocalAiAnswer(command: string, modelRoute: AiModelRoute) {
     return "Nodiary의 AI는 꼭 앱에 변경을 반영하기 위해서만 있는 것이 아닙니다. 질문에는 답변으로 돌려주고, 문서나 캘린더를 바꾸는 요청만 승인 카드로 정리해서 사용자가 승인할 때 반영합니다.";
   }
 
-  if (command.includes("꽃") && command.includes("정의")) {
+  if (command.includes("꽃")) {
     return "꽃은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다. 보통 꽃잎, 꽃받침, 수술, 암술로 이루어지며 색과 향으로 곤충이나 바람 같은 매개를 끌어들입니다.";
   }
 
+  if (command.includes("캘린더") || command.includes("일정")) {
+    return createCalendarContextAnswer(context);
+  }
+
+  const contextLines = createContextAnswerLines(context);
+
+  if (contextLines.length > 0) {
+    return `선택한 컨텍스트 기준으로 읽었습니다. ${contextLines.join(" ")}`;
+  }
+
   return "질문에는 답변으로 돌려주고, 문서나 캘린더를 바꾸는 요청만 승인 카드로 올립니다. 변경을 원하면 무엇을 바꿀지 말해주면 승인 전에 요약해서 보여드릴게요.";
+}
+
+function createCalendarContextAnswer(context: AiContextSnapshot) {
+  const calendar = context.calendarContext;
+
+  if (!calendar) {
+    return "왼쪽 캘린더 컨텍스트가 꺼져 있어 일정 내용을 읽지 않았습니다. 왼쪽 캘린더 칩을 켜고 다시 보내면 선택 날짜의 일정을 기준으로 답합니다.";
+  }
+
+  if (calendar.schedule.length === 0) {
+    return `왼쪽 캘린더 기준 ${calendar.selectedDate}에는 표시된 일정이 없습니다.`;
+  }
+
+  const schedule = calendar.schedule
+    .map((event) => `${event.time} ${event.title}`)
+    .join(", ");
+
+  return `왼쪽 캘린더 기준 ${calendar.selectedDate} 일정은 ${schedule}입니다.`;
+}
+
+function createContextAnswerLines(context: AiContextSnapshot) {
+  const lines: string[] = [];
+
+  if (context.pageTitle !== "Nodiary") {
+    lines.push(`현재 페이지: ${context.pageTitle}.`);
+  }
+
+  if (context.selectedText) {
+    lines.push(`선택 블록: ${context.selectedText.replace(/\s+/g, " ").slice(0, 120)}.`);
+  }
+
+  if (context.calendarContext) {
+    lines.push(createCalendarContextAnswer(context));
+  }
+
+  if (context.memory.length > 0) {
+    lines.push(`장기 메모리: ${context.memory.join(" / ")}`);
+  }
+
+  return lines;
 }
 
 function getApprovalSummaryLines(action: {

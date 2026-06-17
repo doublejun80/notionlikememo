@@ -1,4 +1,5 @@
 export type OperatorContext = {
+  calendarContext?: string;
   command: string;
   pageTitle: string;
   selectedText: string;
@@ -110,6 +111,7 @@ export function buildOpenAiOperatorPayload(
       "High-risk calendar writes, deletion, bulk edits, and database restructuring require approval.",
       `Current page: ${context.pageTitle}`,
       `Selected text: ${context.selectedText || "(none)"}`,
+      `Calendar context: ${context.calendarContext || "(none)"}`,
       `Long-term memory: ${context.memory.join(" | ") || "(none)"}`,
       `User command: ${context.command}`
     ].join("\n"),

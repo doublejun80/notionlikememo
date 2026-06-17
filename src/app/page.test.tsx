@@ -514,6 +514,138 @@ describe("HomePage", () => {
     expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
   });
 
+  it("answers short knowledge prompts instead of turning them into approval items", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    await user.type(await screen.findByLabelText("AI 명령 입력"), "꽃");
+    await user.keyboard("{Enter}");
+
+    expect(await screen.findByText("AI 답변")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
+  });
+
+  it("shows a one-line question and reading icon while an AI request is pending", async () => {
+    const user = userEvent.setup();
+    let resolveFetch: (value: Response) => void = () => {};
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveFetch = resolve;
+          })
+      )
+    );
+
+    render(<HomePage />);
+
+    const command =
+      "이 페이지 전체를 읽고 실행 계획으로 정리하되 질문 제목은 길어도 한 줄로만 보여줘";
+
+    await user.type(await screen.findByLabelText("AI 명령 입력"), command);
+    await user.click(screen.getByRole("button", { name: "AI에게 보내기" }));
+
+    const readingCard = await screen.findByRole("status", { name: "AI가 읽는 중" });
+
+    expect(within(readingCard).getByTitle(command)).toHaveClass("truncate");
+    expect(within(readingCard).getByTestId("ai-reading-icon")).toHaveClass(
+      "animate-spin"
+    );
+
+    resolveFetch({
+      ok: true,
+      json: async () => ({
+        model: "gpt-5.5",
+        modelRoute: "planner",
+        plan: {
+          summary: "읽은 내용을 실행 계획으로 정리합니다.",
+          actions: [
+            {
+              toolName: "updateBlock",
+              argsJson: {
+                blockId: "memo-body",
+                text: "읽은 내용을 실행 계획으로 정리했습니다."
+              },
+              diffJson: {
+                after: "읽은 내용을 실행 계획으로 정리했습니다."
+              },
+              riskLevel: "medium",
+              undoJson: {}
+            }
+          ],
+          memories: []
+        }
+      })
+    } as Response);
+
+    expect(
+      (await screen.findAllByText(/읽은 내용을 실행 계획/)).length
+    ).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("status", { name: "AI가 읽는 중" })
+      ).not.toBeInTheDocument()
+    );
+  });
+
+  it("shows an inline AI error card when the operator request fails", async () => {
+    const user = userEvent.setup();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        json: async () => ({ error: "operator_down" })
+      }))
+    );
+
+    render(<HomePage />);
+
+    const command = "이 페이지를 실행 계획으로 정리해줘";
+
+    await user.type(await screen.findByLabelText("AI 명령 입력"), command);
+    await user.click(screen.getByRole("button", { name: "AI에게 보내기" }));
+
+    const errorCard = await screen.findByRole("alert", { name: "AI 요청 실패" });
+
+    expect(within(errorCard).getByTitle(command)).toHaveClass("truncate");
+    expect(errorCard).toHaveTextContent("AI 연결에 실패했습니다");
+  });
+
+  it("answers with only the enabled AI context scopes", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "현재 페이지 컨텍스트 포함" })
+    );
+    await user.click(
+      screen.getByRole("button", { name: "선택 블록 컨텍스트 포함" })
+    );
+    await user.click(
+      screen.getByRole("button", { name: "장기 메모리 컨텍스트 포함" })
+    );
+
+    await user.type(
+      await screen.findByLabelText("AI 명령 입력"),
+      "왼쪽 캘린더 기준으로 오늘 일정 알려줘"
+    );
+    await user.keyboard("{Enter}");
+
+    const answer = await screen.findByText(
+      /왼쪽 캘린더 기준 .*제품 기획서 정리/
+    );
+
+    expect(answer).toHaveTextContent("왼쪽 캘린더");
+    expect(answer).toHaveTextContent("제품 기획서 정리");
+    expect(answer).not.toHaveTextContent("오늘의 계획");
+    expect(answer).not.toHaveTextContent("프로젝트 대시보드");
+  });
+
   it("keeps long-term memory as context instead of a persistent right panel card", async () => {
     render(<HomePage />);
 
@@ -891,8 +1023,12 @@ describe("HomePage", () => {
     await user.click(screen.getByRole("button", { name: "AI에게 보내기" }));
 
     expect(
-      await screen.findByText("OpenAI 연결에 실패해 로컬 초안으로 승인 큐를 만들었습니다.")
-    ).toBeInTheDocument();
+      (
+        await screen.findAllByText(
+          "AI 연결에 실패했습니다. 로컬 초안으로 대체 제안을 만들었습니다."
+        )
+      ).length
+    ).toBeGreaterThan(0);
     expect(await screen.findByText(/실행 계획 callout과 확인 작업/)).toBeInTheDocument();
     expect(screen.queryByText("+ AI 실행 계획 callout")).not.toBeInTheDocument();
   });
@@ -918,8 +1054,8 @@ describe("HomePage", () => {
 
     expect(await screen.findByText("일정 이동 제안")).toBeInTheDocument();
     expect(
-      await screen.findByText(/디자인 리뷰 일정을 2026-06-18 16:30/)
-    ).toBeInTheDocument();
+      (await screen.findAllByText(/디자인 리뷰 일정을 2026-06-18 16:30/)).length
+    ).toBeGreaterThan(0);
 
     await user.click(screen.getByRole("button", { name: "승인" }));
 

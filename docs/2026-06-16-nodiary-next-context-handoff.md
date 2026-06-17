@@ -339,6 +339,50 @@ Latest Electron QA:
   - `/tmp/nodiary-ai-block-memory-qa/results-clean.json`
   - `/tmp/nodiary-ai-block-memory-qa/results-nodiary-app.json`
 
+## 2026-06-17 AI Panel Feedback/Context Hotfix 상태
+
+- Right AI panel의 `답변 및 승인 대기` 영역을 실제 요청 상태 중심으로 개편했다.
+  - 전송 직후 `AI가 읽는 중` status card를 표시한다.
+  - 긴 질문은 카드 안에서 한 줄 truncate 처리하고 전체 문장은 `title`로 유지한다.
+  - 로딩 상태에는 lucide `Loader2` spinner와 현재 모델명을 표시한다.
+  - operator route 실패 시 같은 영역에 `AI 요청 실패` alert card를 표시하고, 동시에 로컬 초안 승인 제안을 만든다.
+  - 승인/거절을 누르면 실패 상태 card는 정리된다.
+- 질문/변경 분기 기준을 보강했다.
+  - 물음표가 있는 질문, `정의/뜻/설명/요약/알려/답변/대답/모델/의도`류 입력은 `AI 답변`으로 남긴다.
+  - `추가/작성/수정/편집/삭제/정리/이동/반영` 등 문서나 일정 변경 요청은 승인 제안으로 보낸다.
+  - `꽃` 같은 짧은 지식 질문도 승인 큐가 아니라 답변 카드로 처리한다.
+- AI context chip 동작을 하나의 snapshot으로 통일했다.
+  - `현재 페이지`, `선택 블록`, `왼쪽 캘린더`, `장기 메모리` chip이 켜진 범위만 direct answer와 operator request에 전달된다.
+  - 왼쪽 캘린더 context가 켜져 있으면 선택 날짜와 schedule summary를 서버 operator prompt에도 포함한다.
+  - 캘린더 context가 꺼진 상태에서 일정 질문을 하면 읽지 않았다고 답한다.
+- `/api/ai/operator` validation/context 전달을 확장했다.
+  - `calendarContext` object를 서버에서 bounded summary 문자열로 검증/변환한다.
+  - OpenAI operator payload에 `Calendar context:` line을 추가했다.
+
+Latest verification:
+
+- `npm test`: 13 files, 114 tests passed.
+- `npm run typecheck`: passed.
+- `npm run lint`: passed.
+- `npm run build`: passed.
+- `npm run electron:pack`: passed, macOS notarization step skipped by existing builder config.
+
+Latest Electron QA:
+
+- Playwright Electron runtime with `electron/main.cjs`, dev server `127.0.0.1:3000`.
+  - reading status card visible with spinner and one-line question.
+  - approval result card visible after delayed operator response.
+  - direct answer card visible for a question about AI intent.
+  - error alert card visible after simulated operator failure.
+  - hydration/unauthorized console messages after controlled reload: `0`.
+- Latest artifacts outside the repo:
+  - `/tmp/nodiary-ai-panel-redesign-qa/01-panel-default.png`
+  - `/tmp/nodiary-ai-panel-redesign-qa/02-reading.png`
+  - `/tmp/nodiary-ai-panel-redesign-qa/03-approval-result.png`
+  - `/tmp/nodiary-ai-panel-redesign-qa/04-direct-answer.png`
+  - `/tmp/nodiary-ai-panel-redesign-qa/05-error.png`
+  - `/tmp/nodiary-ai-panel-redesign-qa/result.json`
+
 ## 아직 남은 이슈
 
 - Slash menu 검색/필터 미구현.

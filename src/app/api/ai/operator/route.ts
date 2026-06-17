@@ -7,6 +7,7 @@ const MAX_SELECTED_TEXT_LENGTH = 12000;
 const MAX_PAGE_TITLE_LENGTH = 160;
 const MAX_MEMORY_ITEMS = 8;
 const MAX_MEMORY_ITEM_LENGTH = 500;
+const MAX_CALENDAR_CONTEXT_LENGTH = 1200;
 const DEFAULT_OPENAI_OPERATOR_MODEL = "gpt-5.5";
 
 type AiModelRoute = "quick" | "planner" | "large-context";
@@ -48,15 +49,19 @@ export async function POST(request: Request) {
 
   try {
     const model = resolveOperatorModel();
-    const plan = await requestOpenAiOperatorPlan({
-      command: parsedBody.value.command,
-      pageTitle: parsedBody.value.pageTitle,
-      selectedText: parsedBody.value.selectedText,
-      memory: parsedBody.value.memory
-    }, {
-      apiKey,
-      model
-    });
+    const plan = await requestOpenAiOperatorPlan(
+      {
+        command: parsedBody.value.command,
+        pageTitle: parsedBody.value.pageTitle,
+        selectedText: parsedBody.value.selectedText,
+        calendarContext: parsedBody.value.calendarContext,
+        memory: parsedBody.value.memory
+      },
+      {
+        apiKey,
+        model
+      }
+    );
 
     return NextResponse.json({
       model,
@@ -81,6 +86,7 @@ type ParsedOperatorBody =
         modelRoute: AiModelRoute;
         pageTitle: string;
         selectedText: string;
+        calendarContext?: string;
         memory: string[];
       };
     }
@@ -116,7 +122,16 @@ function parseOperatorBody(body: unknown): ParsedOperatorBody {
     return { ok: false, error: "context_too_large", status: 413 };
   }
 
+  const calendarContext = readCalendarContext(record.calendarContext);
   const memory = readMemory(record.memory);
+
+  if (!calendarContext.ok) {
+    return {
+      ok: false,
+      error: calendarContext.error,
+      status: calendarContext.status
+    };
+  }
 
   if (!memory.ok) {
     return { ok: false, error: memory.error, status: memory.status };
@@ -129,6 +144,7 @@ function parseOperatorBody(body: unknown): ParsedOperatorBody {
       modelRoute: readModelRoute(record.modelRoute),
       pageTitle: pageTitle?.trim() || "오늘의 계획",
       selectedText: selectedText ?? "",
+      calendarContext: calendarContext.value,
       memory: memory.value
     }
   };
@@ -154,6 +170,52 @@ function readLimitedString(value: unknown, maxLength: number) {
   }
 
   return value.length > maxLength ? null : value;
+}
+
+function readCalendarContext(
+  value: unknown
+):
+  | { ok: true; value?: string }
+  | { ok: false; error: string; status: 400 | 413 | 422 } {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, error: "invalid_calendar_context", status: 422 };
+  }
+
+  const record = value as Record<string, unknown>;
+  const selectedDate = readLimitedString(record.selectedDate, 40);
+
+  if (selectedDate === null) {
+    return { ok: false, error: "calendar_context_too_large", status: 413 };
+  }
+
+  const events = Array.isArray(record.schedule)
+    ? record.schedule.slice(0, 12).flatMap((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+          return [];
+        }
+
+        const event = item as Record<string, unknown>;
+        const time = readLimitedString(event.time, 20);
+        const title = readLimitedString(event.title, 120);
+
+        if (time === null || title === null) {
+          return [];
+        }
+
+        return title ? [`${time ?? ""} ${title}`.trim()] : [];
+      })
+    : [];
+  const summary = [`선택일 ${selectedDate ?? "(없음)"}`, ...events].join(": ");
+
+  if (summary.length > MAX_CALENDAR_CONTEXT_LENGTH) {
+    return { ok: false, error: "calendar_context_too_large", status: 413 };
+  }
+
+  return { ok: true, value: summary };
 }
 
 function readMemory(

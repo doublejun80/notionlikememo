@@ -12,7 +12,8 @@ describe("OpenAI operator boundary", () => {
       command: "메모를 실행 계획으로 바꿔줘.",
       pageTitle: "오늘의 계획",
       selectedText: "회의 준비와 일정 정리",
-      memory: ["AI 변경은 approval/undo가 필요하다."]
+      memory: ["AI 변경은 approval/undo가 필요하다."],
+      calendarContext: "선택일 2026-06-17: 10:00 제품 기획서 정리"
     });
 
     expect(payload.model).toBe("gpt-5.5");
@@ -21,6 +22,7 @@ describe("OpenAI operator boundary", () => {
     expect(payload.input).toContain(
       "If selected text includes `Block ID:`, use that exact id"
     );
+    expect(payload.input).toContain("선택일 2026-06-17");
     expect(payload.text.format).toMatchObject({
       type: "json_schema",
       name: "nodiary_ai_operator_plan",

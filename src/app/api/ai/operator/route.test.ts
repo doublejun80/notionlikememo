@@ -127,4 +127,37 @@ describe("/api/ai/operator", () => {
       vi.mocked(requestOpenAiOperatorPlan).mock.calls[0]?.[0].memory
     ).toHaveLength(8);
   });
+
+  it("passes selected sidebar calendar context to the OpenAI operator", async () => {
+    vi.mocked(requestOpenAiOperatorPlan).mockResolvedValue({
+      summary: "캘린더 기반 제안",
+      actions: [],
+      memories: []
+    });
+
+    await POST(
+      new Request("http://localhost/api/ai/operator", {
+        method: "POST",
+        body: JSON.stringify({
+          command: "오늘 일정 기준으로 정리해줘",
+          calendarContext: {
+            selectedDate: "2026-06-17",
+            schedule: [
+              {
+                time: "10:00",
+                title: "제품 기획서 정리"
+              }
+            ]
+          }
+        })
+      })
+    );
+
+    expect(requestOpenAiOperatorPlan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendarContext: expect.stringContaining("2026-06-17")
+      }),
+      expect.anything()
+    );
+  });
 });
