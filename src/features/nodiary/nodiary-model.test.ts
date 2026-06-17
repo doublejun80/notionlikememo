@@ -311,6 +311,46 @@ describe("nodiary model", () => {
     });
   });
 
+  it("replaces an AI edit request block after approval without writing execution logs", () => {
+    const withAiRequest = insertBlockFromSlash(defaultNodiaryState(), "memo-body", "ai");
+    const aiRequestBlock = withAiRequest.activePage.blocks.find(
+      (block) => block.type === "ai"
+    );
+
+    expect(aiRequestBlock).toBeDefined();
+
+    const queued = createAiRun(withAiRequest, "꽃의 정의");
+    const action = queued.ai.runs[0]?.actions[0];
+
+    expect(action).toMatchObject({
+      approvalStatus: "pending",
+      toolName: "updateBlock",
+      applyPayload: {
+        operation: {
+          toolName: "updateBlock",
+          argsJson: {
+            blockId: aiRequestBlock?.id
+          }
+        }
+      }
+    });
+
+    const approved = approveAiAction(queued, action.id);
+    const updatedBlock = approved.activePage.blocks.find(
+      (block) => block.id === aiRequestBlock?.id
+    );
+
+    expect(updatedBlock).toMatchObject({
+      type: "paragraph",
+      text: expect.stringContaining("꽃")
+    });
+    expect(
+      approved.activePage.blocks.some((block) =>
+        (block.text ?? "").includes("AI 승인 실행 기록")
+      )
+    ).toBe(false);
+  });
+
   it("parses local AI fallback calendar move commands into approval proposals", () => {
     const withRun = createAiRun(
       defaultNodiaryState(),
@@ -658,6 +698,49 @@ describe("nodiary model", () => {
       false
     );
     expect(planned.ai.memories.at(0)?.content).toBe("문서-first 흐름을 유지한다.");
+  });
+
+  it("targets the AI request block when an operator edit plan omits a block id", () => {
+    const state = insertBlockFromSlash(defaultNodiaryState(), "memo-body", "ai");
+    const aiRequestBlock = state.activePage.blocks.find((block) => block.type === "ai");
+    const planned = createAiRunFromOperatorPlan(state, "꽃의 정의", {
+      summary: "선택된 블록을 꽃의 정의 설명으로 교체합니다.",
+      actions: [
+        {
+          toolName: "updateBlock",
+          argsJson: {
+            text: "꽃은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다."
+          },
+          diffJson: {
+            after: "꽃은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다."
+          },
+          riskLevel: "medium",
+          undoJson: {}
+        }
+      ],
+      memories: []
+    });
+    const action = planned.ai.runs[0]?.actions[0];
+
+    expect(action.applyPayload.blocks).toHaveLength(0);
+    expect(action.applyPayload.operation?.argsJson).toMatchObject({
+      blockId: aiRequestBlock?.id,
+      text: "꽃은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다."
+    });
+
+    const approved = approveAiAction(planned, action.id);
+
+    expect(
+      approved.activePage.blocks.find((block) => block.id === aiRequestBlock?.id)
+    ).toMatchObject({
+      type: "paragraph",
+      text: "꽃은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다."
+    });
+    expect(
+      approved.activePage.blocks.some((block) =>
+        (block.text ?? "").includes("AI 승인 실행 기록")
+      )
+    ).toBe(false);
   });
 
   it("uses approval-time snapshots so operator undo does not overwrite later user edits", () => {

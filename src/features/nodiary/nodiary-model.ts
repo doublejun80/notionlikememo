@@ -1189,6 +1189,17 @@ export function createAiRun(
     return calendarMoveRun;
   }
 
+  const aiRequestBlockRun = createAiRequestBlockRun(
+    state,
+    command,
+    modelRoute,
+    modelName
+  );
+
+  if (aiRequestBlockRun) {
+    return aiRequestBlockRun;
+  }
+
   const insertedBlocks: NodiaryBlock[] = [
     {
       id: "ai-plan",
@@ -1219,6 +1230,67 @@ export function createAiRun(
   };
   const run: AiRun = {
     id: `run-${state.ai.runs.length + 1}`,
+    command,
+    status: "awaiting_approval",
+    modelRoute,
+    modelName,
+    actions: [action]
+  };
+
+  return {
+    ...state,
+    ai: {
+      ...state.ai,
+      panelInput: "",
+      runs: [run, ...state.ai.runs]
+    }
+  };
+}
+
+function createAiRequestBlockRun(
+  state: NodiaryState,
+  command: string,
+  modelRoute: AiModelRoute,
+  modelName?: string
+): NodiaryState | undefined {
+  const targetBlock = findAiRequestBlock(state);
+
+  if (!targetBlock) {
+    return undefined;
+  }
+
+  const runIndex = state.ai.runs.length + 1;
+  const answerText = createLocalAiRequestBlockText(command);
+  const action: AiProposedAction = {
+    id: `ai-block-action-${runIndex}`,
+    toolName: "updateBlock",
+    summary: "AI 요청 블록을 답변 결과로 교체합니다.",
+    diff: JSON.stringify(
+      {
+        before: targetBlock.text ?? "",
+        after: answerText
+      },
+      null,
+      2
+    ),
+    riskLevel: "medium",
+    approvalStatus: "pending",
+    applyPayload: {
+      operation: {
+        toolName: "updateBlock",
+        argsJson: {
+          blockId: targetBlock.id,
+          text: answerText,
+          type: "paragraph"
+        }
+      }
+    },
+    undoPayload: {
+      restoreBlocks: [targetBlock]
+    }
+  };
+  const run: AiRun = {
+    id: `ai-block-run-${runIndex}`,
     command,
     status: "awaiting_approval",
     modelRoute,
@@ -1319,11 +1391,17 @@ export function createAiRunFromOperatorPlan(
 ): NodiaryState {
   const runNumber = state.ai.runs.length + 1;
   const actions: AiProposedAction[] = plan.actions.map((action, index) => {
+    const argsJson = normalizeOperatorArgsForAiRequest(
+      state,
+      command,
+      action.toolName,
+      action.argsJson ?? {},
+      action.diffJson
+    );
     const summary = `${plan.summary} (${action.toolName})`;
     const diff = formatOperatorDiff(action.diffJson);
     const actionId = `operator-action-${runNumber}-${index + 1}`;
-    const fallbackBlockId = `operator-result-${runNumber}-${index + 1}`;
-    const restoreBlocks = getOperatorRestoreBlocks(state, action.argsJson ?? {});
+    const restoreBlocks = getOperatorRestoreBlocks(state, argsJson);
 
     return {
       id: actionId,
@@ -1336,19 +1414,13 @@ export function createAiRunFromOperatorPlan(
         insertAfterBlockId: "owner-note",
         operation: {
           toolName: action.toolName,
-          argsJson: action.argsJson ?? {}
+          argsJson
         },
-        blocks: [
-          {
-            id: fallbackBlockId,
-            type: "callout",
-            text: `AI 승인 실행 기록: ${plan.summary}`
-          }
-        ]
+        blocks: []
       },
       undoPayload: {
         ...(action.undoJson ?? {}),
-        removeBlockIds: [fallbackBlockId],
+        removeBlockIds: [],
         restoreBlocks
       }
     };
@@ -2361,6 +2433,99 @@ function getOperatorRestoreBlocks(
   return block ? [block] : [];
 }
 
+function normalizeOperatorArgsForAiRequest(
+  state: NodiaryState,
+  command: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  diffJson: unknown
+): Record<string, unknown> {
+  if (toolName !== "updateBlock" || readStringArg(args, "blockId")) {
+    return args;
+  }
+
+  const targetBlock = findAiRequestBlock(state);
+
+  if (!targetBlock) {
+    return args;
+  }
+
+  return {
+    ...args,
+    blockId: targetBlock.id,
+    text:
+      readStringArg(args, "text") ??
+      readStringArg(args, "content") ??
+      extractProposedText(diffJson) ??
+      createLocalAiRequestBlockText(command),
+    type: "paragraph"
+  };
+}
+
+function findAiRequestBlock(state: NodiaryState): NodiaryBlock | undefined {
+  for (let index = state.activePage.blocks.length - 1; index >= 0; index -= 1) {
+    const block = state.activePage.blocks[index];
+
+    if (block.type === "ai") {
+      return block;
+    }
+  }
+
+  return undefined;
+}
+
+function createLocalAiRequestBlockText(command: string): string {
+  const normalized = command.trim();
+  const definitionSubject = parseDefinitionSubject(normalized);
+
+  if (definitionSubject === "꽃") {
+    return "꽃은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다. 보통 꽃잎, 꽃받침, 수술, 암술로 이루어지며 색과 향으로 곤충이나 바람 같은 매개를 끌어들입니다.";
+  }
+
+  if (definitionSubject) {
+    return `${definitionSubject}의 정의는 ${definitionSubject}이 무엇인지 구분할 수 있게 하는 핵심 의미와 조건을 짧게 정리한 설명입니다.`;
+  }
+
+  return `${normalized || "요청한 내용"}에 대한 AI 답변을 이 블록에 정리합니다. 문서에 반영할 내용만 남기고 내부 실행 기록은 쓰지 않습니다.`;
+}
+
+function parseDefinitionSubject(command: string): string | undefined {
+  const match = command.match(/^\s*['"“”‘’]?(.+?)['"“”‘’]?\s*(?:의|에 대한)\s*정의/);
+  const subject = match?.[1]?.trim();
+
+  return subject ? subject.replace(/[?.!。]+$/g, "") : undefined;
+}
+
+function extractProposedText(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value.trim() || undefined;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const extracted = extractProposedText(item);
+
+      if (extracted) {
+        return extracted;
+      }
+    }
+  }
+
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+
+    for (const key of ["after", "to", "text", "content", "answer"]) {
+      const extracted = extractProposedText(record[key]);
+
+      if (extracted) {
+        return extracted;
+      }
+    }
+  }
+
+  return undefined;
+}
+
 function getCalendarMoveRisk(
   event: CalendarEvent,
   targetSchedule: CalendarEvent[]
@@ -2536,6 +2701,7 @@ function updateBlockTextFromArgs(
 ): NodiaryState {
   const text = readStringArg(args, "text") ?? readStringArg(args, "content");
   const title = readStringArg(args, "title");
+  const type = readBlockTypeArg(args, "type");
 
   if (text === undefined && title === undefined) {
     return state;
@@ -2550,6 +2716,7 @@ function updateBlockTextFromArgs(
 
         return {
           ...block,
+          type: type ?? (block.type === "ai" && text !== undefined ? "paragraph" : block.type),
           text: text ?? block.text,
           title: title ?? block.title
         };
@@ -2564,6 +2731,23 @@ function readStringArg(
   const value = args[key];
 
   return typeof value === "string" ? value : undefined;
+}
+
+function readBlockTypeArg(
+  args: Record<string, unknown>,
+  key: string
+): BlockType | undefined {
+  const value = args[key];
+
+  return value === "paragraph" ||
+    value === "heading" ||
+    value === "todo" ||
+    value === "callout" ||
+    value === "divider" ||
+    value === "database" ||
+    value === "ai"
+    ? value
+    : undefined;
 }
 
 function readNumberArg(

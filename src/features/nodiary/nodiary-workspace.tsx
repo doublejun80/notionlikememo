@@ -468,7 +468,7 @@ export function NodiaryWorkspace({
 
     setAiInput("");
 
-    if (shouldAnswerDirectly(command)) {
+    if (!hasPendingAiRequestBlock(state) && shouldAnswerDirectly(command)) {
       const modelOption = getAiModelOption(selectedAiModelRoute);
 
       setAiNotice("");
@@ -2914,16 +2914,6 @@ function AiOperatorPanel({
         </div>
       </section>
 
-      <section className="mt-3 rounded-md border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-3 py-3">
-        <div className="text-[13px] font-semibold text-[var(--nodiary-text)]">장기 메모리</div>
-        <div className="mt-2 space-y-2">
-          {aiState.memories.map((memory) => (
-            <div className="rounded bg-[var(--nodiary-panel-muted)] px-2 py-2 text-[12px] leading-5 text-[var(--nodiary-muted)]" key={memory.id}>
-              {memory.content}
-            </div>
-          ))}
-        </div>
-      </section>
     </aside>
   );
 }
@@ -3605,17 +3595,35 @@ function storeCaptures(items: CapturedItem[]) {
 
 function getSelectedBlockContext(state: NodiaryState) {
   const selectedBlock =
+    findPendingAiRequestBlock(state) ??
     state.activePage.blocks.find((block) => block.id === "memo-body") ??
     state.activePage.blocks.find((block) => block.type === "paragraph") ??
     state.activePage.blocks[0];
 
   return [
+    selectedBlock ? `Block ID: ${selectedBlock.id}` : undefined,
     selectedBlock?.title,
     selectedBlock?.text
   ]
     .filter(Boolean)
     .join("\n")
     .slice(0, 12000);
+}
+
+function hasPendingAiRequestBlock(state: NodiaryState) {
+  return Boolean(findPendingAiRequestBlock(state));
+}
+
+function findPendingAiRequestBlock(state: NodiaryState) {
+  for (let index = state.activePage.blocks.length - 1; index >= 0; index -= 1) {
+    const block = state.activePage.blocks[index];
+
+    if (block.type === "ai") {
+      return block;
+    }
+  }
+
+  return undefined;
 }
 
 function getAiModelOption(modelRoute: AiModelRoute) {
@@ -3633,7 +3641,7 @@ function shouldAnswerDirectly(command: string) {
 
   return (
     normalized.includes("?") ||
-    ["모델", "의도", "왜", "뭐", "무엇", "어떤", "답변", "대답"].some((token) =>
+    ["모델", "의도", "왜", "뭐", "무엇", "어떤", "정의", "설명", "답변", "대답"].some((token) =>
       normalized.includes(token)
     )
   );
@@ -3648,6 +3656,10 @@ function createLocalAiAnswer(command: string, modelRoute: AiModelRoute) {
 
   if (command.includes("의도") || command.includes("노디") || command.includes("Nodiary")) {
     return "Nodiary의 AI는 꼭 앱에 변경을 반영하기 위해서만 있는 것이 아닙니다. 질문에는 답변으로 돌려주고, 문서나 캘린더를 바꾸는 요청만 승인 카드로 정리해서 사용자가 승인할 때 반영합니다.";
+  }
+
+  if (command.includes("꽃") && command.includes("정의")) {
+    return "꽃은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다. 보통 꽃잎, 꽃받침, 수술, 암술로 이루어지며 색과 향으로 곤충이나 바람 같은 매개를 끌어들입니다.";
   }
 
   return "질문에는 답변으로 돌려주고, 문서나 캘린더를 바꾸는 요청만 승인 카드로 올립니다. 변경을 원하면 무엇을 바꿀지 말해주면 승인 전에 요약해서 보여드릴게요.";

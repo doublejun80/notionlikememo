@@ -300,6 +300,45 @@ Latest Electron QA:
   - `/tmp/nodiary-delete-ai-qa/electron-page-delete-ai-approval.png`
   - `/tmp/nodiary-delete-ai-qa/electron-results.json`
 
+## 2026-06-17 AI Block Edit/Memory Hotfix 상태
+
+- Right AI panel의 `장기 메모리` 독립 카드를 제거했다.
+  - 장기 메모리는 계속 `장기 메모리` context chip으로 포함/제외할 수 있다.
+  - AI panel의 작은 폭에서 메모리 원문이 공간을 차지하지 않는다.
+- `AI에게 이 블록 편집 요청`으로 삽입한 AI request block은 승인 후 실제 답변/편집 결과로 교체된다.
+  - OpenAI operator plan이 `updateBlock.argsJson.blockId`를 누락해도 현재 page의 AI request block을 target으로 보정한다.
+  - 승인 후 central document에 `AI 승인 실행 기록` 같은 내부 로그 block을 쓰지 않는다.
+  - AI request placeholder는 승인 후 일반 paragraph block으로 바뀐다.
+- 질문성 입력 처리를 보강했다.
+  - `꽃의 정의`처럼 물음표가 없어도, pending AI edit block이 없으면 approval queue가 아니라 `AI 답변`으로 남긴다.
+  - pending AI edit block이 있으면 질문/정의 요청도 해당 block에 반영할 문서 변경 제안으로 처리한다.
+- `/api/ai/operator` prompt에 selected text가 `Block ID:`를 포함하면 `updateBlock.argsJson`에 해당 ID를 쓰도록 명시했다.
+
+Latest verification:
+
+- `npm test`: 13 files, 109 tests passed.
+- `npm run typecheck`: passed.
+- `npm run lint`: passed.
+- `npm run build`: passed.
+
+Latest Electron QA:
+
+- Playwright Electron runtime with `electron/main.cjs`:
+  - flower answer visible: `1`.
+  - approval execution log visible: `0`.
+  - AI request placeholder visible after approval: `0`.
+  - long-term memory body visible in right panel: `0`.
+  - long-term memory context chip visible: `1`.
+  - console/page errors: `0`.
+- Playwright Electron launched `.nodiary-electron/Nodiary.app/Contents/MacOS/Nodiary`.
+  - app title: `Nodiary`.
+  - same AI block edit flow passed with console/page errors: `0`.
+- Latest artifacts outside the repo:
+  - `/tmp/nodiary-ai-block-memory-qa/electron-ai-block-result-clean.png`
+  - `/tmp/nodiary-ai-block-memory-qa/electron-nodiary-app-ai-block-result.png`
+  - `/tmp/nodiary-ai-block-memory-qa/results-clean.json`
+  - `/tmp/nodiary-ai-block-memory-qa/results-nodiary-app.json`
+
 ## 아직 남은 이슈
 
 - Slash menu 검색/필터 미구현.

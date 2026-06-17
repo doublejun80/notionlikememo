@@ -106,6 +106,7 @@ export function buildOpenAiOperatorPayload(
       "Return proposed actions only. Do not claim that changes were executed.",
       "Every mutating action must include a human-readable diff, risk level, and undo payload.",
       "For each action, encode argsJson, diffJson, and undoJson as JSON strings.",
+      "If selected text includes `Block ID:`, use that exact id in updateBlock argsJson.",
       "High-risk calendar writes, deletion, bulk edits, and database restructuring require approval.",
       `Current page: ${context.pageTitle}`,
       `Selected text: ${context.selectedText || "(none)"}`,

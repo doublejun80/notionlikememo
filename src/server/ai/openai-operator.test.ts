@@ -18,6 +18,9 @@ describe("OpenAI operator boundary", () => {
     expect(payload.model).toBe("gpt-5.5");
     expect(payload.input).toContain("오늘의 계획");
     expect(payload.input).toContain("메모를 실행 계획으로 바꿔줘.");
+    expect(payload.input).toContain(
+      "If selected text includes `Block ID:`, use that exact id"
+    );
     expect(payload.text.format).toMatchObject({
       type: "json_schema",
       name: "nodiary_ai_operator_plan",

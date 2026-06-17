@@ -501,6 +501,30 @@ describe("HomePage", () => {
     expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
   });
 
+  it("answers definition-style AI questions directly when no edit block is pending", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    await user.type(await screen.findByLabelText("AI 명령 입력"), "꽃의 정의");
+    await user.keyboard("{Enter}");
+
+    expect(await screen.findByText("AI 답변")).toBeInTheDocument();
+    expect(screen.getByText(/꽃은 식물의 번식 기관/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
+  });
+
+  it("keeps long-term memory as context instead of a persistent right panel card", async () => {
+    render(<HomePage />);
+
+    expect(
+      await screen.findByRole("button", { name: "장기 메모리 컨텍스트 포함" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/사용자는 첫 화면이 프로젝트 대시보드가 아니라 문서 편집 화면/)
+    ).not.toBeInTheDocument();
+  });
+
   it("adds and edits database rows from the inserted database block", async () => {
     const user = userEvent.setup();
 
@@ -666,6 +690,57 @@ describe("HomePage", () => {
 
     await user.click(screen.getByRole("button", { name: "되돌리기" }));
     expect(getDocumentBlock("메모 본문")).toHaveTextContent("Notion-like의 첫인상");
+  });
+
+  it("writes approved AI block-edit results into the requested block, not document logs", async () => {
+    const user = userEvent.setup();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          model: "gpt-5.5",
+          modelRoute: "planner",
+          plan: {
+            summary: "선택된 블록을 꽃의 정의 설명으로 교체합니다.",
+            actions: [
+              {
+                toolName: "updateBlock",
+                argsJson: {
+                  text: "꽃은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다."
+                },
+                diffJson: {
+                  after: "꽃은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다."
+                },
+                riskLevel: "medium",
+                undoJson: {}
+              }
+            ],
+            memories: []
+          }
+        })
+      }))
+    );
+
+    render(<HomePage />);
+
+    await user.click(screen.getByLabelText("빈 블록 입력"));
+    await user.keyboard("/");
+    await user.click(
+      screen.getByRole("menuitem", { name: "AI에게 이 블록 편집 요청" })
+    );
+    expect(screen.getByText("이 블록을 AI에게 편집 요청")).toBeInTheDocument();
+
+    await user.type(await screen.findByLabelText("AI 명령 입력"), "꽃의 정의");
+    await user.click(screen.getByRole("button", { name: "AI에게 보내기" }));
+    await screen.findByText(/꽃은 식물의 번식 기관/);
+
+    await user.click(screen.getByRole("button", { name: "승인" }));
+
+    expect(screen.getByText(/꽃은 식물의 번식 기관/)).toBeInTheDocument();
+    expect(screen.queryByText("이 블록을 AI에게 편집 요청")).not.toBeInTheDocument();
+    expect(screen.queryByText(/AI 승인 실행 기록/)).not.toBeInTheDocument();
   });
 
   it("executes approved OpenAI calendar creation and removes it from the pending queue", async () => {
