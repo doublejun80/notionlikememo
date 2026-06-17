@@ -83,6 +83,33 @@ describe("HomePage", () => {
     expect(screen.getByText("제품 기획서 정리")).toBeInTheDocument();
   });
 
+  it("uses centered row geometry for sidebar schedule items and callouts", () => {
+    render(<HomePage />);
+
+    const scheduleRow = screen.getByRole("button", {
+      name: "일정 드래그: 제품 기획서 정리"
+    });
+
+    expect(scheduleRow).toHaveClass("items-center");
+    expect(scheduleRow).not.toHaveClass("items-start");
+    expect(within(scheduleRow).getByText("10:00")).toHaveClass(
+      "flex",
+      "h-7",
+      "items-center"
+    );
+    expect(within(scheduleRow).getByText("제품 기획서 정리")).toHaveClass(
+      "flex",
+      "min-h-7",
+      "items-center"
+    );
+
+    const callout = screen.getByTestId("callout-block-owner-note");
+
+    expect(callout).toHaveClass("items-center");
+    expect(callout).not.toHaveClass("items-start");
+    expect(screen.getByTestId("callout-icon-owner-note")).not.toHaveClass("mt-1");
+  });
+
   it("keeps page tree titles aligned by rendering fixed chevron and drag slots", () => {
     render(<HomePage />);
 

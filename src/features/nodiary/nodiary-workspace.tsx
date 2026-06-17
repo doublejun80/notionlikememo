@@ -977,7 +977,7 @@ function NodiarySidebar({
               <button
                 aria-label={`일정 드래그: ${event.title}`}
                 key={event.id}
-                className="flex min-h-11 w-full items-start gap-2 rounded-md bg-[var(--nodiary-selected)] px-2.5 py-2 text-left hover:bg-[var(--nodiary-hover)]"
+                className="flex min-h-11 w-full items-center gap-2 rounded-md bg-[var(--nodiary-selected)] px-2.5 py-2 text-left hover:bg-[var(--nodiary-hover)]"
                 draggable
                 onDragStart={(dragEvent) => {
                   dragEvent.dataTransfer.setData(
@@ -988,10 +988,10 @@ function NodiarySidebar({
                 }}
                 type="button"
               >
-                <span className="min-w-[44px] text-[12px] font-semibold text-[var(--nodiary-text-strong)]">
+                <span className="flex h-7 min-w-[44px] items-center text-[12px] font-semibold leading-none text-[var(--nodiary-text-strong)]">
                   {event.time}
                 </span>
-                <span className="min-w-0 text-[12px] leading-5 text-[var(--nodiary-muted)]">
+                <span className="flex min-h-7 min-w-0 items-center text-[12px] leading-5 text-[var(--nodiary-muted)]">
                   {event.title}
                   {event.conflictRisk ? (
                     <span className="ml-2 rounded bg-[var(--nodiary-warning-bg)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--nodiary-warning-text)]">
@@ -1651,7 +1651,10 @@ function DocumentBlock({
     >
       <button
         aria-label={`블록 삭제: ${getBlockLabel(block)}`}
-        className="absolute right-1 top-1 z-10 flex h-7 w-7 items-center justify-center rounded text-[var(--nodiary-icon-muted)] opacity-100 hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-text)] sm:right-[-30px] md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
+        className={cn(
+          "absolute right-1 z-10 flex h-7 w-7 items-center justify-center rounded text-[var(--nodiary-icon-muted)] opacity-100 hover:bg-[var(--nodiary-hover)] hover:text-[var(--nodiary-text)] sm:right-[-30px] md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100",
+          block.type === "database" ? "top-1" : "top-1/2 -translate-y-1/2"
+        )}
         onClick={() => onDeleteBlock(block.id)}
         type="button"
       >
@@ -1710,8 +1713,14 @@ function DocumentBlock({
           />
         ) : null}
         {block.type === "callout" ? (
-          <div className="flex min-h-10 items-start gap-3 rounded-md bg-[var(--nodiary-soft)] px-3 py-2 text-[15px] leading-7 text-[var(--nodiary-text-strong)]">
-            <MessageSquareText className="mt-1 h-4 w-4 shrink-0 text-[var(--nodiary-muted)]" />
+          <div
+            className="flex min-h-10 items-center gap-3 rounded-md bg-[var(--nodiary-soft)] px-3 py-2 text-[15px] leading-7 text-[var(--nodiary-text-strong)]"
+            data-testid={`callout-block-${block.id}`}
+          >
+            <MessageSquareText
+              className="h-4 w-4 shrink-0 text-[var(--nodiary-muted)]"
+              data-testid={`callout-icon-${block.id}`}
+            />
             <RichTextBlock
               blockId={block.id}
               onChange={onUpdateBlockText}

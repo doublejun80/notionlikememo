@@ -31,6 +31,25 @@
 - QA screenshot outside repo:
   - `/tmp/nodiary-calendar-hydration-qa.png`
 
+## 2026-06-17 정렬 핫픽스
+
+- sidebar 일정 카드의 `time/title` 텍스트 슬롯을 같은 28px 높이의 centered row geometry로 통일했다.
+- callout block은 `items-start`와 icon `mt-1` 보정을 제거하고, icon/text가 같은 수직 중심선을 쓰도록 변경했다.
+- 일반 문서 block delete button은 row 중앙 기준으로 맞추고, database처럼 큰 block은 기존 top anchor를 유지했다.
+- regression test 추가:
+  - sidebar schedule row가 `items-center`를 사용하고 time/title slot이 centered geometry를 갖는지 확인.
+  - callout container/icon이 `items-start`/`mt-1` 보정을 쓰지 않는지 확인.
+- 검증:
+  - `npm test`: 13 files, 99 tests passed.
+  - `npm run typecheck`: passed.
+  - `npm run lint`: passed.
+  - `npm run build`: passed.
+  - Playwright Chromium QA: schedule time/title delta 0px, callout icon/text delta 0px.
+  - Playwright Electron QA: schedule time/title delta 0px, callout icon/text delta 0px, console/page error 0.
+- QA screenshots outside repo:
+  - `/tmp/nodiary-centered-row-qa.png`
+  - `/tmp/nodiary-centered-row-electron-qa.png`
+
 ## 최신 핫픽스
 
 - OpenAI operator 연결 실패의 실제 원인은 Responses API strict schema가 object형 `argsJson`/`diffJson`/`undoJson`을 거부한 것이었다. 해당 필드를 JSON string contract로 바꾸고, 서버 파서에서 JSON string을 다시 record로 복원하게 수정했다.
