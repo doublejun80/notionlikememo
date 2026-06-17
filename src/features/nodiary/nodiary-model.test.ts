@@ -311,6 +311,26 @@ describe("nodiary model", () => {
     });
   });
 
+  it("adds direct AI answers to the active document as a visible block", () => {
+    const answered = createAiAnswerRun(
+      defaultNodiaryState(),
+      "꽃",
+      "꽃은 식물의 번식 기관입니다.",
+      "planner",
+      "gpt-5.5"
+    );
+
+    expect(answered.activePage.blocks.at(-1)).toMatchObject({
+      id: "ai-answer-1",
+      type: "callout",
+      text: "AI 답변: 꽃은 식물의 번식 기관입니다."
+    });
+    expect(answered.pages[answered.activePage.id]?.blocks.at(-1)).toMatchObject({
+      id: "ai-answer-1",
+      text: "AI 답변: 꽃은 식물의 번식 기관입니다."
+    });
+  });
+
   it("replaces an AI edit request block after approval without writing execution logs", () => {
     const withAiRequest = insertBlockFromSlash(defaultNodiaryState(), "memo-body", "ai");
     const aiRequestBlock = withAiRequest.activePage.blocks.find(

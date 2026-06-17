@@ -3,6 +3,7 @@
 import {
   AlertCircle,
   Bot,
+  Brain,
   CalendarDays,
   Check,
   CheckSquare,
@@ -845,6 +846,7 @@ export function NodiaryWorkspace({
 
       {isSettingsOpen ? (
         <SettingsDialog
+          memories={state.ai.memories}
           onClose={() => setSettingsOpen(false)}
           onUpdate={(patch) =>
             setState((current) => {
@@ -3028,10 +3030,12 @@ function AiCommandLine({ command }: { command: string }) {
 }
 
 function SettingsDialog({
+  memories,
   onClose,
   onUpdate,
   preferences
 }: {
+  memories: ReturnType<typeof defaultNodiaryState>["ai"]["memories"];
   preferences: ReturnType<typeof defaultNodiaryState>["preferences"];
   onClose: () => void;
   onUpdate: (patch: Partial<typeof preferences>) => void;
@@ -3169,6 +3173,36 @@ function SettingsDialog({
           <div>document width: {preferences.documentWidth}</div>
           <div>startup: {preferences.startupPage}</div>
         </div>
+
+        <section className="mt-5 rounded border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-3 py-3">
+          <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--nodiary-text)]">
+            <Brain className="h-4 w-4 text-[var(--nodiary-accent)]" aria-hidden="true" />
+            장기 메모리
+          </div>
+          <div className="mt-1 text-[12px] leading-5 text-[var(--nodiary-muted)]">
+            AI가 컨텍스트 칩을 켰을 때 참고하는 장기 지침입니다.
+          </div>
+          <div className="mt-3 space-y-2">
+            {memories.length > 0 ? (
+              memories.map((memory) => (
+                <div
+                  className="rounded border border-[var(--nodiary-border-subtle)] bg-[var(--nodiary-panel-muted)] px-3 py-2 text-[12px] leading-5 text-[var(--nodiary-text-strong)]"
+                  key={memory.id}
+                >
+                  <div>{memory.content}</div>
+                  <div className="mt-1 text-[11px] text-[var(--nodiary-muted-soft)]">
+                    source: {memory.source} · confidence:{" "}
+                    {Math.round(memory.confidence * 100)}%
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="rounded border border-dashed border-[var(--nodiary-border-strong)] px-3 py-3 text-[12px] text-[var(--nodiary-muted-soft)]">
+                저장된 장기 메모리가 없습니다.
+              </div>
+            )}
+          </div>
+        </section>
       </section>
     </div>
   );

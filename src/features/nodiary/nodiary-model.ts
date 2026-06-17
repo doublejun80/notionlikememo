@@ -1148,8 +1148,9 @@ export function createAiAnswerRun(
   modelRoute: AiModelRoute = "planner",
   modelName?: string
 ): NodiaryState {
+  const answerIndex = state.ai.runs.length + 1;
   const run: AiRun = {
-    id: `answer-run-${state.ai.runs.length + 1}`,
+    id: `answer-run-${answerIndex}`,
     command,
     status: "completed",
     modelRoute,
@@ -1157,15 +1158,23 @@ export function createAiAnswerRun(
     answer,
     actions: []
   };
+  const answerBlock: NodiaryBlock = {
+    id: `ai-answer-${answerIndex}`,
+    type: "callout",
+    text: `AI 답변: ${answer}`
+  };
 
-  return {
+  return withActivePage({
     ...state,
     ai: {
       ...state.ai,
       panelInput: "",
       runs: [run, ...state.ai.runs]
     }
-  };
+  }, {
+    ...state.activePage,
+    blocks: [...state.activePage.blocks, answerBlock]
+  });
 }
 
 function getDefaultAiModelRoute(command: string): AiModelRoute {

@@ -383,6 +383,37 @@ Latest Electron QA:
   - `/tmp/nodiary-ai-panel-redesign-qa/05-error.png`
   - `/tmp/nodiary-ai-panel-redesign-qa/result.json`
 
+## 2026-06-18 AI Answer Placement/Memory Visibility Hotfix 상태
+
+- Direct AI answer가 오른쪽 panel에만 남지 않고 중앙 문서에도 visible callout block으로 붙도록 고쳤다.
+  - `createAiAnswerRun`이 `ai.runs` 저장과 함께 active page 끝에 `AI 답변: ...` callout block을 추가한다.
+  - block은 `pages[activePage.id]`와 `activePage` 양쪽에 동기화된다.
+  - approval button 없이 일반 답변은 계속 `AI 답변` run으로 남는다.
+- 장기 메모리를 다시 볼 수 있게 했다.
+  - 오른쪽 AI panel 공간은 계속 차지하지 않는다.
+  - `설정 열기` → `개인화 설정` dialog 안에 `장기 메모리` section을 추가했다.
+  - memory content, source, confidence를 read-only로 표시한다.
+
+Latest verification:
+
+- `npm test`: 13 files, 117 tests passed.
+- `npm run typecheck`: passed.
+- `npm run lint`: passed.
+- `npm run build`: passed.
+- `npm run electron:pack`: passed, macOS notarization step skipped by existing builder config.
+
+Latest Electron QA:
+
+- Playwright Electron runtime with `electron/main.cjs`, dev server `127.0.0.1:3000`.
+  - `꽃` direct answer after Enter creates central document callout block.
+  - right panel still shows `AI 답변`.
+  - settings dialog shows `장기 메모리` and existing memory contents.
+  - console messages: `0`.
+- Latest artifacts outside the repo:
+  - `/tmp/nodiary-memory-answer-qa/01-central-ai-answer.png`
+  - `/tmp/nodiary-memory-answer-qa/02-settings-memory.png`
+  - `/tmp/nodiary-memory-answer-qa/result.json`
+
 ## 아직 남은 이슈
 
 - Slash menu 검색/필터 미구현.

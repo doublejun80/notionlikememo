@@ -496,7 +496,9 @@ describe("HomePage", () => {
     await user.keyboard("{Enter}");
 
     expect(await screen.findByText("AI 답변")).toBeInTheDocument();
-    expect(screen.getByText(/질문에는 답변으로 돌려주고/)).toBeInTheDocument();
+    expect(
+      (await screen.findAllByText(/질문에는 답변으로 돌려주고/)).length
+    ).toBeGreaterThan(0);
     expect(screen.getByText("답변 및 승인 대기")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
   });
@@ -510,7 +512,9 @@ describe("HomePage", () => {
     await user.keyboard("{Enter}");
 
     expect(await screen.findByText("AI 답변")).toBeInTheDocument();
-    expect(screen.getByText(/꽃은 식물의 번식 기관/)).toBeInTheDocument();
+    expect(
+      (await screen.findAllByText(/꽃은 식물의 번식 기관/)).length
+    ).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
   });
 
@@ -523,6 +527,20 @@ describe("HomePage", () => {
     await user.keyboard("{Enter}");
 
     expect(await screen.findByText("AI 답변")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
+  });
+
+  it("adds direct AI answers to the central document", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    await user.type(await screen.findByLabelText("AI 명령 입력"), "꽃");
+    await user.keyboard("{Enter}");
+
+    const documentBlock = await screen.findByTestId("callout-block-ai-answer-1");
+
+    expect(documentBlock).toHaveTextContent("AI 답변: 꽃은 식물의 번식 기관");
     expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
   });
 
@@ -636,9 +654,9 @@ describe("HomePage", () => {
     );
     await user.keyboard("{Enter}");
 
-    const answer = await screen.findByText(
-      /왼쪽 캘린더 기준 .*제품 기획서 정리/
-    );
+    const answer = (
+      await screen.findAllByText(/왼쪽 캘린더 기준 .*제품 기획서 정리/)
+    )[0];
 
     expect(answer).toHaveTextContent("왼쪽 캘린더");
     expect(answer).toHaveTextContent("제품 기획서 정리");
@@ -1226,6 +1244,26 @@ describe("HomePage", () => {
 
     expect(screen.getByText("density: compact")).toBeInTheDocument();
     expect(screen.getByText("right panel: closed")).toBeInTheDocument();
+  });
+
+  it("shows long-term memory inside settings", async () => {
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    await user.click(screen.getAllByRole("button", { name: "설정 열기" })[0]);
+
+    const dialog = screen.getByRole("dialog", { name: "개인화 설정" });
+
+    expect(within(dialog).getByText("장기 메모리")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "사용자는 첫 화면이 프로젝트 대시보드가 아니라 문서 편집 화면이어야 한다고 강조했다."
+      )
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("AI 변경은 diff, 항목별 승인, undo log를 거쳐야 한다.")
+    ).toBeInTheDocument();
   });
 
   it("traps settings modal focus, restores focus, and applies dark theme tokens", async () => {
