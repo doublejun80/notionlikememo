@@ -386,7 +386,7 @@ Latest Electron QA:
 ## 2026-06-18 AI Answer Placement/Memory Visibility Hotfix 상태
 
 - Direct AI answer가 오른쪽 panel에만 남지 않고 중앙 문서에도 visible callout block으로 붙도록 고쳤다.
-  - `createAiAnswerRun`이 `ai.runs` 저장과 함께 active page 끝에 `AI 답변: ...` callout block을 추가한다.
+  - `createAiAnswerRun`이 `ai.runs` 저장과 함께 active page 끝에 plain answer callout block을 추가한다.
   - block은 `pages[activePage.id]`와 `activePage` 양쪽에 동기화된다.
   - approval button 없이 일반 답변은 계속 `AI 답변` run으로 남는다.
 - 장기 메모리를 다시 볼 수 있게 했다.
@@ -413,6 +413,47 @@ Latest Electron QA:
   - `/tmp/nodiary-memory-answer-qa/01-central-ai-answer.png`
   - `/tmp/nodiary-memory-answer-qa/02-settings-memory.png`
   - `/tmp/nodiary-memory-answer-qa/result.json`
+
+## 2026-06-18 AI Immediate Apply/Selection/Markdown Hotfix 상태
+
+- 5개 탐색 축으로 AI flow를 재점검했다.
+  - 의도 라우팅: 물음표가 있어도 `옮겨/수정/추가` 같은 변경 명령은 답변으로 빠지지 않게 했다.
+  - 선택 블록: `selectedBlockId`를 실제 클릭/포커스 블록에서 추적하고, AI payload의 `selectedText`에 해당 `Block ID`를 넣는다.
+  - AI request block: slash로 삽입한 `AI에게 이 블록 편집 요청`은 placeholder 자신이 아니라 원래 anchor block을 `aiTargetBlockId`로 보관한다.
+  - 즉시 적용: operator/local fallback action은 UI에서 승인 버튼을 거치지 않고 바로 적용하고, undo log는 유지한다.
+  - Markdown 방어: AI 답변과 `updateBlock` text/content/title, diff fallback text를 문서 state 진입 전에 plain text로 정리한다.
+- Right AI panel copy를 현재 동작에 맞게 바꿨다.
+  - badge: `바로 적용`
+  - section title: `답변 및 실행 결과`
+  - 모델 설명/placeholder/direct answer 문구에서 승인 큐 표현을 제거했다.
+- OpenAI operator prompt도 plain document text를 요구하고, risk는 local apply + undo 판단용으로 유지하게 바꿨다.
+- Workspace API/repository가 `aiTargetBlockId`를 validate/serialize/deserialize한다.
+
+Latest verification:
+
+- `npm test`: 13 files, 119 tests passed.
+- `npm run typecheck`: passed.
+- `npm run lint`: passed.
+- `npm run build`: passed.
+- `CSC_IDENTITY_AUTO_DISCOVERY=false npm run electron:pack`: passed.
+- `npm audit --audit-level=moderate`: 0 vulnerabilities.
+
+Latest Electron QA:
+
+- Browser plugin unavailable, regular Playwright Electron used.
+- Electron launched against `next start` on `127.0.0.1:3010` with a test session token.
+- Mocked `/api/ai/operator` returned Markdown text for a block edit.
+- Results:
+  - direct answer central callout visible.
+  - AI request placeholder count: `0`.
+  - approval button count: `0`.
+  - Markdown marker count (`##`/`**`): `0`.
+  - Direct answer block은 `AI 답변:` 같은 시스템 라벨 없이 답변 본문만 남긴다.
+  - `memo-body` changed to `꽃의 정의 꽃은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다.`
+  - Electron console/page errors: `0`.
+- Latest artifacts outside the repo:
+  - `/tmp/nodiary-ai-immediate-qa/electron-ai-immediate.png`
+  - `/tmp/nodiary-ai-immediate-qa/result.json`
 
 ## 아직 남은 이슈
 

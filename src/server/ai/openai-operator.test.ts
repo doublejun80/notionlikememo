@@ -22,6 +22,9 @@ describe("OpenAI operator boundary", () => {
     expect(payload.input).toContain(
       "If selected text includes `Block ID:`, use that exact id"
     );
+    expect(payload.input).toContain(
+      "Write document text as plain text, not Markdown"
+    );
     expect(payload.input).toContain("선택일 2026-06-17");
     expect(payload.text.format).toMatchObject({
       type: "json_schema",

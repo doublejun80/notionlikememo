@@ -48,6 +48,7 @@ export type NodiaryBlock = {
   text?: string;
   checked?: boolean;
   database?: DatabaseBlock;
+  aiTargetBlockId?: string;
 };
 
 export type DatabaseRow = {
@@ -128,6 +129,7 @@ export type AiProposedAction = {
   applyPayload: {
     insertAfterBlockId?: string;
     blocks?: NodiaryBlock[];
+    removeBlockIds?: string[];
     operation?: {
       toolName: string;
       argsJson: Record<string, unknown>;
@@ -410,9 +412,12 @@ function createTodayPage(todayIsoDate: string): NodiaryPage {
 export function insertBlockFromSlash(
   state: NodiaryState,
   afterBlockId: string,
-  insertType: SlashInsertType
+  insertType: SlashInsertType,
+  options: { aiTargetBlockId?: string } = {}
 ): NodiaryState {
-  const block = createBlockFromSlash(insertType, state);
+  const block = createBlockFromSlash(insertType, state, {
+    aiTargetBlockId: options.aiTargetBlockId ?? afterBlockId
+  });
   const afterIndex = state.activePage.blocks.findIndex(
     (candidate) => candidate.id === afterBlockId
   );
@@ -1149,19 +1154,20 @@ export function createAiAnswerRun(
   modelName?: string
 ): NodiaryState {
   const answerIndex = state.ai.runs.length + 1;
+  const normalizedAnswer = normalizeAiDocumentText(answer);
   const run: AiRun = {
     id: `answer-run-${answerIndex}`,
     command,
     status: "completed",
     modelRoute,
     modelName,
-    answer,
+    answer: normalizedAnswer,
     actions: []
   };
   const answerBlock: NodiaryBlock = {
     id: `ai-answer-${answerIndex}`,
     type: "callout",
-    text: `AI 답변: ${answer}`
+    text: normalizedAnswer
   };
 
   return withActivePage({
@@ -1185,14 +1191,17 @@ export function createAiRun(
   state: NodiaryState,
   command: string,
   modelRoute: AiModelRoute = getDefaultAiModelRoute(command),
-  modelName?: string
+  modelName?: string,
+  options: { allowCalendarContext?: boolean } = {}
 ): NodiaryState {
-  const calendarMoveRun = createCalendarMoveRunFromCommand(
-    state,
-    command,
-    modelRoute,
-    modelName
-  );
+  const calendarMoveRun = options.allowCalendarContext === false
+    ? undefined
+    : createCalendarMoveRunFromCommand(
+        state,
+        command,
+        modelRoute,
+        modelName
+      );
 
   if (calendarMoveRun) {
     return calendarMoveRun;
@@ -1262,21 +1271,25 @@ function createAiRequestBlockRun(
   modelRoute: AiModelRoute,
   modelName?: string
 ): NodiaryState | undefined {
-  const targetBlock = findAiRequestBlock(state);
+  const requestBlock = findAiRequestBlock(state);
 
-  if (!targetBlock) {
+  if (!requestBlock) {
     return undefined;
   }
 
   const runIndex = state.ai.runs.length + 1;
-  const answerText = createLocalAiRequestBlockText(command);
+  const targetBlock =
+    findBlockById(state, requestBlock.aiTargetBlockId) ?? requestBlock;
+  const answerText = normalizeAiDocumentText(createLocalAiRequestBlockText(command));
+  const removeBlockIds =
+    targetBlock.id === requestBlock.id ? [] : [requestBlock.id];
   const action: AiProposedAction = {
     id: `ai-block-action-${runIndex}`,
     toolName: "updateBlock",
-    summary: "AI 요청 블록을 답변 결과로 교체합니다.",
+    summary: "선택한 블록에 AI 편집 결과를 바로 반영합니다.",
     diff: JSON.stringify(
       {
-        before: targetBlock.text ?? "",
+        before: targetBlock.text ?? targetBlock.title ?? "",
         after: answerText
       },
       null,
@@ -1292,10 +1305,11 @@ function createAiRequestBlockRun(
           text: answerText,
           type: "paragraph"
         }
-      }
+      },
+      removeBlockIds
     },
     undoPayload: {
-      restoreBlocks: [targetBlock]
+      restoreBlocks: [targetBlock, requestBlock]
     }
   };
   const run: AiRun = {
@@ -1411,6 +1425,14 @@ export function createAiRunFromOperatorPlan(
     const diff = formatOperatorDiff(action.diffJson);
     const actionId = `operator-action-${runNumber}-${index + 1}`;
     const restoreBlocks = getOperatorRestoreBlocks(state, argsJson);
+    const requestBlock = findAiRequestBlock(state);
+    const normalizedBlockId = readStringArg(argsJson, "blockId");
+    const removeBlockIds =
+      action.toolName === "updateBlock" &&
+      requestBlock &&
+      normalizedBlockId !== requestBlock.id
+        ? [requestBlock.id]
+        : [];
 
     return {
       id: actionId,
@@ -1425,12 +1447,13 @@ export function createAiRunFromOperatorPlan(
           toolName: action.toolName,
           argsJson
         },
-        blocks: []
+        blocks: [],
+        removeBlockIds
       },
       undoPayload: {
         ...(action.undoJson ?? {}),
         removeBlockIds: [],
-        restoreBlocks
+        restoreBlocks: requestBlock ? [...restoreBlocks, requestBlock] : restoreBlocks
       }
     };
   });
@@ -1489,6 +1512,16 @@ export function approveAiAction(
       ]
     }
   };
+}
+
+export function applyPendingAiActions(state: NodiaryState): NodiaryState {
+  return state.ai.runs
+    .flatMap((run) => run.actions)
+    .filter((action) => action.approvalStatus === "pending")
+    .reduce(
+      (nextState, action) => approveAiAction(nextState, action.id),
+      state
+    );
 }
 
 export function rejectAiAction(
@@ -1627,7 +1660,8 @@ function updatePageDateProperty(page: NodiaryPage, todayIsoDate: string): Nodiar
 
 function createBlockFromSlash(
   insertType: SlashInsertType,
-  state: NodiaryState
+  state: NodiaryState,
+  options: { aiTargetBlockId?: string } = {}
 ): NodiaryBlock {
   const existingIds = new Set(state.activePage.blocks.map((block) => block.id));
 
@@ -1671,7 +1705,8 @@ function createBlockFromSlash(
       return {
         id: createUniqueId(existingIds, "ai"),
         type: "ai",
-        text: "이 블록을 AI에게 편집 요청"
+        text: "이 블록을 AI에게 편집 요청",
+        aiTargetBlockId: options.aiTargetBlockId
       };
     case "paragraph":
     default:
@@ -2449,24 +2484,33 @@ function normalizeOperatorArgsForAiRequest(
   args: Record<string, unknown>,
   diffJson: unknown
 ): Record<string, unknown> {
-  if (toolName !== "updateBlock" || readStringArg(args, "blockId")) {
+  if (toolName !== "updateBlock") {
     return args;
   }
 
-  const targetBlock = findAiRequestBlock(state);
+  const requestBlock = findAiRequestBlock(state);
+  const providedBlockId = readStringArg(args, "blockId");
+  const sanitizedArgs = normalizeAiTextArgs(args);
 
-  if (!targetBlock) {
-    return args;
+  if (!requestBlock) {
+    return sanitizedArgs;
+  }
+
+  const targetBlock = findBlockById(state, requestBlock.aiTargetBlockId) ?? requestBlock;
+
+  if (providedBlockId && providedBlockId !== requestBlock.id) {
+    return sanitizedArgs;
   }
 
   return {
-    ...args,
+    ...sanitizedArgs,
     blockId: targetBlock.id,
-    text:
-      readStringArg(args, "text") ??
-      readStringArg(args, "content") ??
-      extractProposedText(diffJson) ??
-      createLocalAiRequestBlockText(command),
+    text: normalizeAiDocumentText(
+      readStringArg(sanitizedArgs, "text") ??
+        readStringArg(sanitizedArgs, "content") ??
+        extractProposedText(diffJson) ??
+        createLocalAiRequestBlockText(command)
+    ),
     type: "paragraph"
   };
 }
@@ -2481,6 +2525,56 @@ function findAiRequestBlock(state: NodiaryState): NodiaryBlock | undefined {
   }
 
   return undefined;
+}
+
+function findBlockById(
+  state: NodiaryState,
+  blockId: string | undefined
+): NodiaryBlock | undefined {
+  if (!blockId) {
+    return undefined;
+  }
+
+  return state.activePage.blocks.find((block) => block.id === blockId);
+}
+
+function normalizeAiTextArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...args };
+
+  for (const key of ["text", "content", "title"]) {
+    const value = readStringArg(next, key);
+
+    if (value !== undefined) {
+      next[key] = normalizeAiDocumentText(value);
+    }
+  }
+
+  return next;
+}
+
+function normalizeAiDocumentText(value: string): string {
+  return value
+    .replace(/\r\n/g, "\n")
+    .replace(/```[\s\S]*?```/g, (match) =>
+      match
+        .split("\n")
+        .filter((line) => !line.trim().startsWith("```"))
+        .join("\n")
+    )
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    .replace(/^\s{0,3}>\s?/gm, "")
+    .replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*\d+[.)]\s+/gm, "")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+    .replace(/__([^_\n]+)__/g, "$1")
+    .replace(/\*([^*\n]+)\*/g, "$1")
+    .replace(/_([^_\n]+)_/g, "$1")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/^\s*[-*_]{3,}\s*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function createLocalAiRequestBlockText(command: string): string {
@@ -2555,13 +2649,17 @@ function applyAiActionPayload(
   action: AiProposedAction
 ): NodiaryState {
   const operatedState = applyOperatorOperation(state, action);
+  const stateAfterRemoval = removeBlocksById(
+    operatedState,
+    action.applyPayload.removeBlockIds
+  );
 
-  if (operatedState !== state) {
-    return operatedState;
+  if (operatedState !== state || stateAfterRemoval !== operatedState) {
+    return stateAfterRemoval;
   }
 
   const insertAfterBlockId = action.applyPayload.insertAfterBlockId;
-  const insertBlocks = action.applyPayload.blocks ?? [];
+  const insertBlocks = (action.applyPayload.blocks ?? []).map(normalizeAiBlockText);
   const afterIndex = state.activePage.blocks.findIndex(
     (block) => block.id === insertAfterBlockId
   );
@@ -2574,6 +2672,30 @@ function applyAiActionPayload(
       ...insertBlocks,
       ...state.activePage.blocks.slice(insertIndex)
     ]
+  });
+}
+
+function normalizeAiBlockText(block: NodiaryBlock): NodiaryBlock {
+  return {
+    ...block,
+    text: block.text === undefined ? undefined : normalizeAiDocumentText(block.text),
+    title: block.title === undefined ? undefined : normalizeAiDocumentText(block.title)
+  };
+}
+
+function removeBlocksById(
+  state: NodiaryState,
+  blockIds: string[] | undefined
+): NodiaryState {
+  const ids = new Set((blockIds ?? []).filter(Boolean));
+
+  if (ids.size === 0) {
+    return state;
+  }
+
+  return withActivePage(state, {
+    ...state.activePage,
+    blocks: state.activePage.blocks.filter((block) => !ids.has(block.id))
   });
 }
 
@@ -2614,7 +2736,14 @@ function applyOperatorOperation(
   }
 
   if (operation.toolName === "updateCalendarEvent") {
-    const eventId = readStringArg(args, "eventId");
+    const eventId =
+      readStringArg(args, "eventId") ??
+      findCalendarEventIdByTitle(
+        state,
+        readStringArg(args, "eventTitle") ??
+          readStringArg(args, "title") ??
+          readStringArg(args, "summary")
+      );
     const date = readStringArg(args, "date");
 
     if (eventId && date) {
@@ -2657,6 +2786,21 @@ function applyOperatorOperation(
   }
 
   return state;
+}
+
+function findCalendarEventIdByTitle(
+  state: NodiaryState,
+  title: string | undefined
+): string | undefined {
+  const normalizedTitle = title?.trim();
+
+  if (!normalizedTitle) {
+    return undefined;
+  }
+
+  return getCalendarEventsInVisibleRange(state.sidebarCalendar).find((event) =>
+    normalizedTitle.includes(event.title) || event.title.includes(normalizedTitle)
+  )?.id;
 }
 
 function createCalendarEventFromArgs(
@@ -2708,8 +2852,10 @@ function updateBlockTextFromArgs(
   blockId: string,
   args: Record<string, unknown>
 ): NodiaryState {
-  const text = readStringArg(args, "text") ?? readStringArg(args, "content");
-  const title = readStringArg(args, "title");
+  const rawText = readStringArg(args, "text") ?? readStringArg(args, "content");
+  const rawTitle = readStringArg(args, "title");
+  const text = rawText === undefined ? undefined : normalizeAiDocumentText(rawText);
+  const title = rawTitle === undefined ? undefined : normalizeAiDocumentText(rawTitle);
   const type = readBlockTypeArg(args, "type");
 
   if (text === undefined && title === undefined) {

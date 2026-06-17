@@ -499,7 +499,7 @@ describe("HomePage", () => {
     expect(
       (await screen.findAllByText(/질문에는 답변으로 돌려주고/)).length
     ).toBeGreaterThan(0);
-    expect(screen.getByText("답변 및 승인 대기")).toBeInTheDocument();
+    expect(screen.getByText("답변 및 실행 결과")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
   });
 
@@ -540,7 +540,7 @@ describe("HomePage", () => {
 
     const documentBlock = await screen.findByTestId("callout-block-ai-answer-1");
 
-    expect(documentBlock).toHaveTextContent("AI 답변: 꽃은 식물의 번식 기관");
+    expect(documentBlock).toHaveTextContent("꽃은 식물의 번식 기관");
     expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
   });
 
@@ -778,7 +778,7 @@ describe("HomePage", () => {
     expect(juneButtons.at(-1)).toHaveAccessibleName("2026-07-04");
   });
 
-  it("uses the AI operator panel for approval-gated changes and undo", async () => {
+  it("applies AI operator document changes immediately and keeps undo", async () => {
     const user = userEvent.setup();
 
     vi.stubGlobal(
@@ -827,13 +827,12 @@ describe("HomePage", () => {
         method: "POST"
       })
     );
-    expect(screen.getByText("답변 및 승인 대기")).toBeInTheDocument();
+    expect(screen.getByText("답변 및 실행 결과")).toBeInTheDocument();
     expect(
       await screen.findByText(/AI가 승인 후 반영한 문장/)
     ).toBeInTheDocument();
     expect(screen.queryByText(/"after"/)).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "승인" }));
+    expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
     expect(getDocumentBlock("메모 본문")).toHaveTextContent(
       "AI가 승인 후 반영한 문장"
     );
@@ -842,7 +841,55 @@ describe("HomePage", () => {
     expect(getDocumentBlock("메모 본문")).toHaveTextContent("Notion-like의 첫인상");
   });
 
-  it("writes approved AI block-edit results into the requested block, not document logs", async () => {
+  it("sends the real selected block context to the AI operator", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        model: "gpt-5.5",
+        modelRoute: "planner",
+        plan: {
+          summary: "선택 블록을 확인했습니다.",
+          actions: [],
+          memories: []
+        }
+      })
+    }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<HomePage />);
+
+    await user.click(
+      await screen.findByLabelText(
+        "할 일 텍스트: 프로젝트 DB는 첫 화면에서 빼고, 필요할 때 slash 메뉴로만 추가한다."
+      )
+    );
+    expect(document.querySelector('[data-block-id="todo-project"]')).toHaveAttribute(
+      "data-selected",
+      "true"
+    );
+
+    await user.type(await screen.findByLabelText("AI 명령 입력"), "선택 블록을 정리해줘.");
+    await user.click(screen.getByRole("button", { name: "AI에게 보내기" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    const fetchCalls = fetchMock.mock.calls as unknown as Array<
+      [string, RequestInit?]
+    >;
+    const operatorCall = fetchCalls.find(
+      ([url]) => url === "/api/ai/operator"
+    );
+    const requestBody = JSON.parse(
+      String(operatorCall?.[1]?.body)
+    ) as { selectedText?: string };
+
+    expect(requestBody.selectedText).toContain("Block ID: todo-project");
+    expect(requestBody.selectedText).not.toContain("Block ID: memo-body");
+  });
+
+  it("writes AI block-edit results into the requested original block immediately", async () => {
     const user = userEvent.setup();
 
     vi.stubGlobal(
@@ -858,10 +905,10 @@ describe("HomePage", () => {
               {
                 toolName: "updateBlock",
                 argsJson: {
-                  text: "꽃은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다."
+                  text: "## 꽃의 정의\n- **꽃**은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다."
                 },
                 diffJson: {
-                  after: "꽃은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다."
+                  after: "## 꽃의 정의\n- **꽃**은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다."
                 },
                 riskLevel: "medium",
                 undoJson: {}
@@ -886,14 +933,16 @@ describe("HomePage", () => {
     await user.click(screen.getByRole("button", { name: "AI에게 보내기" }));
     await screen.findByText(/꽃은 식물의 번식 기관/);
 
-    await user.click(screen.getByRole("button", { name: "승인" }));
-
-    expect(screen.getByText(/꽃은 식물의 번식 기관/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
+    expect(getDocumentBlock("메모 본문")).toHaveTextContent(
+      "꽃의 정의 꽃은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다."
+    );
     expect(screen.queryByText("이 블록을 AI에게 편집 요청")).not.toBeInTheDocument();
     expect(screen.queryByText(/AI 승인 실행 기록/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/##|\*\*/)).not.toBeInTheDocument();
   });
 
-  it("executes approved OpenAI calendar creation and removes it from the pending queue", async () => {
+  it("executes OpenAI calendar creation immediately without a pending queue", async () => {
     const user = userEvent.setup();
 
     vi.stubGlobal(
@@ -936,12 +985,10 @@ describe("HomePage", () => {
       "내일 오후 2시에 업체 미팅 추가해줘"
     );
     await user.click(screen.getByRole("button", { name: "AI에게 보내기" }));
-    await screen.findByText("일정 추가 제안");
 
-    await user.click(screen.getByRole("button", { name: "승인" }));
-
-    expect(screen.getByText("14:00")).toBeInTheDocument();
-    expect(screen.getByText("업체 미팅")).toBeInTheDocument();
+    expect(await screen.findByText("14:00")).toBeInTheDocument();
+    expect(await screen.findByText("업체 미팅")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
     expect(screen.queryByText("일정 추가 제안")).not.toBeInTheDocument();
     expect(screen.queryByText("승인됨")).not.toBeInTheDocument();
   });
@@ -1010,7 +1057,8 @@ describe("HomePage", () => {
     );
     await user.click(screen.getByRole("button", { name: "AI에게 보내기" }));
 
-    expect(await screen.findByText(/2026-06-18 16:30/)).toBeInTheDocument();
+    expect(await screen.findByText("16:30")).toBeInTheDocument();
+    expect(screen.getByText("디자인 리뷰")).toBeInTheDocument();
     expect(screen.queryByText(/"changes"/)).not.toBeInTheDocument();
     expect(
       consoleError.mock.calls.some(([message]) =>
@@ -1021,7 +1069,7 @@ describe("HomePage", () => {
     consoleError.mockRestore();
   });
 
-  it("falls back to a local approval queue when the AI operator route fails", async () => {
+  it("falls back to a local immediate apply when the AI operator route fails", async () => {
     const user = userEvent.setup();
 
     vi.stubGlobal(
@@ -1043,15 +1091,16 @@ describe("HomePage", () => {
     expect(
       (
         await screen.findAllByText(
-          "AI 연결에 실패했습니다. 로컬 초안으로 대체 제안을 만들었습니다."
+          "AI 연결에 실패했습니다. 로컬 초안으로 바로 반영했습니다."
         )
       ).length
     ).toBeGreaterThan(0);
-    expect(await screen.findByText(/실행 계획 callout과 확인 작업/)).toBeInTheDocument();
+    expect(await screen.findByText(/AI가 제안한 실행 계획/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
     expect(screen.queryByText("+ AI 실행 계획 callout")).not.toBeInTheDocument();
   });
 
-  it("turns local AI calendar move fallback into an approval proposal", async () => {
+  it("turns local AI calendar move fallback into an immediate calendar change", async () => {
     const user = userEvent.setup();
 
     vi.stubGlobal(
@@ -1070,14 +1119,8 @@ describe("HomePage", () => {
     );
     await user.click(screen.getByRole("button", { name: "AI에게 보내기" }));
 
-    expect(await screen.findByText("일정 이동 제안")).toBeInTheDocument();
-    expect(
-      (await screen.findAllByText(/디자인 리뷰 일정을 2026-06-18 16:30/)).length
-    ).toBeGreaterThan(0);
-
-    await user.click(screen.getByRole("button", { name: "승인" }));
-
-    expect(screen.getByText("16:30")).toBeInTheDocument();
+    expect(await screen.findByText("16:30")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
     expect(screen.queryByText("일정 이동 제안")).not.toBeInTheDocument();
     expect(screen.queryByText("높은 위험")).not.toBeInTheDocument();
   });

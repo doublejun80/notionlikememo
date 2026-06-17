@@ -315,23 +315,26 @@ describe("nodiary model", () => {
     const answered = createAiAnswerRun(
       defaultNodiaryState(),
       "꽃",
-      "꽃은 식물의 번식 기관입니다.",
+      "**꽃**은 식물의 번식 기관입니다.\n- 씨앗을 만듭니다.",
       "planner",
       "gpt-5.5"
     );
 
+    expect(answered.ai.runs[0]?.answer).toBe(
+      "꽃은 식물의 번식 기관입니다.\n씨앗을 만듭니다."
+    );
     expect(answered.activePage.blocks.at(-1)).toMatchObject({
       id: "ai-answer-1",
       type: "callout",
-      text: "AI 답변: 꽃은 식물의 번식 기관입니다."
+      text: "꽃은 식물의 번식 기관입니다.\n씨앗을 만듭니다."
     });
     expect(answered.pages[answered.activePage.id]?.blocks.at(-1)).toMatchObject({
       id: "ai-answer-1",
-      text: "AI 답변: 꽃은 식물의 번식 기관입니다."
+      text: "꽃은 식물의 번식 기관입니다.\n씨앗을 만듭니다."
     });
   });
 
-  it("replaces an AI edit request block after approval without writing execution logs", () => {
+  it("applies a local AI edit request to the original block without writing execution logs", () => {
     const withAiRequest = insertBlockFromSlash(defaultNodiaryState(), "memo-body", "ai");
     const aiRequestBlock = withAiRequest.activePage.blocks.find(
       (block) => block.type === "ai"
@@ -347,23 +350,26 @@ describe("nodiary model", () => {
       toolName: "updateBlock",
       applyPayload: {
         operation: {
-          toolName: "updateBlock",
-          argsJson: {
-            blockId: aiRequestBlock?.id
-          }
+          toolName: "updateBlock"
         }
       }
+    });
+    expect(action.applyPayload.operation?.argsJson).toMatchObject({
+      blockId: "memo-body"
     });
 
     const approved = approveAiAction(queued, action.id);
     const updatedBlock = approved.activePage.blocks.find(
-      (block) => block.id === aiRequestBlock?.id
+      (block) => block.id === "memo-body"
     );
 
     expect(updatedBlock).toMatchObject({
       type: "paragraph",
       text: expect.stringContaining("꽃")
     });
+    expect(
+      approved.activePage.blocks.some((block) => block.id === aiRequestBlock?.id)
+    ).toBe(false);
     expect(
       approved.activePage.blocks.some((block) =>
         (block.text ?? "").includes("AI 승인 실행 기록")
@@ -720,7 +726,37 @@ describe("nodiary model", () => {
     expect(planned.ai.memories.at(0)?.content).toBe("문서-first 흐름을 유지한다.");
   });
 
-  it("targets the AI request block when an operator edit plan omits a block id", () => {
+  it("cleans markdown before approved OpenAI block text reaches the document", () => {
+    const planned = createAiRunFromOperatorPlan(defaultNodiaryState(), "정리해줘", {
+      summary: "문단을 바꿉니다.",
+      actions: [
+        {
+          toolName: "updateBlock",
+          argsJson: {
+            blockId: "memo-body",
+            text: "## 꽃의 정의\n- **꽃**은 번식 기관입니다.\n`씨앗`을 만듭니다."
+          },
+          diffJson: {
+            after: "## 꽃의 정의\n- **꽃**은 번식 기관입니다.\n`씨앗`을 만듭니다."
+          },
+          riskLevel: "medium",
+          undoJson: {}
+        }
+      ],
+      memories: []
+    });
+    const approved = approveAiAction(planned, planned.ai.runs[0].actions[0].id);
+    const updatedText = approved.activePage.blocks.find(
+      (block) => block.id === "memo-body"
+    )?.text;
+
+    expect(updatedText).toBe("꽃의 정의\n꽃은 번식 기관입니다.\n씨앗을 만듭니다.");
+    expect(updatedText).not.toContain("##");
+    expect(updatedText).not.toContain("**");
+    expect(updatedText).not.toContain("- ");
+  });
+
+  it("targets the original block when an AI request edit plan omits a block id", () => {
     const state = insertBlockFromSlash(defaultNodiaryState(), "memo-body", "ai");
     const aiRequestBlock = state.activePage.blocks.find((block) => block.type === "ai");
     const planned = createAiRunFromOperatorPlan(state, "꽃의 정의", {
@@ -744,18 +780,22 @@ describe("nodiary model", () => {
 
     expect(action.applyPayload.blocks).toHaveLength(0);
     expect(action.applyPayload.operation?.argsJson).toMatchObject({
-      blockId: aiRequestBlock?.id,
+      blockId: "memo-body",
       text: "꽃은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다."
     });
+    expect(action.applyPayload.removeBlockIds).toEqual([aiRequestBlock?.id]);
 
     const approved = approveAiAction(planned, action.id);
 
     expect(
-      approved.activePage.blocks.find((block) => block.id === aiRequestBlock?.id)
+      approved.activePage.blocks.find((block) => block.id === "memo-body")
     ).toMatchObject({
       type: "paragraph",
       text: "꽃은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다."
     });
+    expect(
+      approved.activePage.blocks.some((block) => block.id === aiRequestBlock?.id)
+    ).toBe(false);
     expect(
       approved.activePage.blocks.some((block) =>
         (block.text ?? "").includes("AI 승인 실행 기록")

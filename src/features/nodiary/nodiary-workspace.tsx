@@ -56,6 +56,7 @@ import { cn } from "@/lib/utils";
 
 import {
   addDatabaseRow,
+  applyPendingAiActions,
   approveAiAction,
   changeCalendarMonth,
   createAiAnswerRun,
@@ -181,7 +182,7 @@ const aiModelOptions: Array<{
     id: "planner",
     label: "균형 작업",
     modelName: defaultOpenAiModelName,
-    description: "문서 편집과 승인 제안을 균형 있게 처리"
+    description: "문서 편집과 답변을 균형 있게 바로 처리"
   },
   {
     id: "quick",
@@ -256,6 +257,9 @@ export function NodiaryWorkspace({
   const [workspaceNotice, setWorkspaceNotice] = useState("");
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [activePageId, setActivePageId] = useState(state.activePage.id);
+  const [selectedBlockId, setSelectedBlockId] = useState<string | undefined>(
+    "memo-body"
+  );
   const [isDesktopShell, setDesktopShell] = useState(false);
   const [enabledAiScopes, setEnabledAiScopes] = useState<AiContextScope[]>(
     defaultEnabledAiScopes
@@ -407,12 +411,24 @@ export function NodiaryWorkspace({
   }, [isAiPanelOpen, isSettingsOpen]);
 
   function insertSlashBlock(type: SlashInsertType) {
-    setState((current) => insertBlockFromSlash(current, slashAnchorBlockId, type));
+    const aiTargetBlockId =
+      type === "ai" ? selectedBlockId ?? slashAnchorBlockId : undefined;
+
+    setState((current) =>
+      insertBlockFromSlash(current, slashAnchorBlockId, type, { aiTargetBlockId })
+    );
+    if (type === "ai") {
+      setSelectedBlockId(aiTargetBlockId);
+    }
     setSlashOpen(false);
   }
 
   function openSlash(anchorBlockId?: string) {
-    setSlashAnchorBlockId(anchorBlockId ?? state.activePage.blocks.at(-1)?.id ?? "memo-body");
+    const nextAnchorBlockId =
+      anchorBlockId ?? state.activePage.blocks.at(-1)?.id ?? "memo-body";
+
+    setSlashAnchorBlockId(nextAnchorBlockId);
+    setSelectedBlockId(nextAnchorBlockId);
     setSlashOpen(true);
   }
 
@@ -491,7 +507,11 @@ export function NodiaryWorkspace({
     }
 
     const modelOption = getAiModelOption(selectedAiModelRoute);
-    const contextSnapshot = buildAiContextSnapshot(state, enabledAiScopes);
+    const contextSnapshot = buildAiContextSnapshot(
+      state,
+      enabledAiScopes,
+      selectedBlockId
+    );
 
     setAiInput("");
     setAiNotice("");
@@ -549,17 +569,19 @@ export function NodiaryWorkspace({
       }
 
       setState((current) =>
-        createAiRunFromOperatorPlan(
-          current,
-          command,
-          payload.plan as OperatorPlanDraft,
-          payload.modelRoute ?? selectedAiModelRoute,
-          payload.model ?? getAiModelOption(selectedAiModelRoute).modelName
+        applyPendingAiActions(
+          createAiRunFromOperatorPlan(
+            current,
+            command,
+            payload.plan as OperatorPlanDraft,
+            payload.modelRoute ?? selectedAiModelRoute,
+            payload.model ?? getAiModelOption(selectedAiModelRoute).modelName
+          )
         )
       );
       setAiRequestStatus(null);
     } catch {
-      const message = "AI 연결에 실패했습니다. 로컬 초안으로 대체 제안을 만들었습니다.";
+      const message = "AI 연결에 실패했습니다. 로컬 초안으로 바로 반영했습니다.";
 
       setAiNotice(message);
       setAiRequestStatus({
@@ -570,7 +592,11 @@ export function NodiaryWorkspace({
         status: "error"
       });
       setState((current) =>
-        createAiRun(current, command, selectedAiModelRoute, "로컬 초안")
+        applyPendingAiActions(
+          createAiRun(current, command, selectedAiModelRoute, "로컬 초안", {
+            allowCalendarContext: Boolean(contextSnapshot.calendarContext)
+          })
+        )
       );
     }
   }
@@ -702,6 +728,7 @@ export function NodiaryWorkspace({
               )
             }
             onOpenSlash={openSlash}
+            onSelectBlock={setSelectedBlockId}
             onSlashInsert={insertSlashBlock}
             onSwitchDatabaseView={(blockId, view) =>
               setState((current) => switchDatabaseView(current, blockId, view))
@@ -720,6 +747,7 @@ export function NodiaryWorkspace({
             }
             pageProperties={state.activePage.properties}
             pageTitle={state.activePage.title}
+            selectedBlockId={selectedBlockId}
             slashOpen={isSlashOpen}
             todayIsoDate={todayIsoDate}
           />
@@ -1520,6 +1548,7 @@ function DocumentCanvas({
   onMoveBlockByKeyboard,
   onMoveDatabaseRow,
   onOpenSlash,
+  onSelectBlock,
   onSlashInsert,
   onSwitchDatabaseView,
   onUpdateDatabaseField,
@@ -1531,6 +1560,7 @@ function DocumentCanvas({
   onUpdateTodo,
   pageProperties,
   pageTitle,
+  selectedBlockId,
   todayIsoDate
 }: {
   blocks: NodiaryBlock[];
@@ -1538,6 +1568,7 @@ function DocumentCanvas({
   isSlashOpen: boolean;
   pageProperties: ReturnType<typeof defaultNodiaryState>["activePage"]["properties"];
   pageTitle: string;
+  selectedBlockId?: string;
   slashOpen: boolean;
   todayIsoDate: string;
   onAddDatabaseRow: (databaseBlockId: string) => void;
@@ -1562,6 +1593,7 @@ function DocumentCanvas({
   onCloseSlash: () => void;
   onInsertParagraph: (text: string) => void;
   onOpenSlash: (anchorBlockId?: string) => void;
+  onSelectBlock: (blockId: string) => void;
   onSlashInsert: (type: SlashInsertType) => void;
   onSwitchDatabaseView: (blockId: string, view: DatabaseViewType) => void;
   onUpdateBlockText: (blockId: string, text: string) => void;
@@ -1604,6 +1636,7 @@ function DocumentCanvas({
             onMoveBlock={onMoveBlock}
             onMoveDatabaseRow={onMoveDatabaseRow}
             onOpenSlash={onOpenSlash}
+            onSelectBlock={onSelectBlock}
             onSwitchDatabaseView={onSwitchDatabaseView}
             onUpdateDatabaseField={onUpdateDatabaseField}
             onUpdateDatabaseFilter={onUpdateDatabaseFilter}
@@ -1611,6 +1644,7 @@ function DocumentCanvas({
             onUpdateBlockText={onUpdateBlockText}
             onUpdateBlockTitle={onUpdateBlockTitle}
             onUpdateTodo={onUpdateTodo}
+            isSelected={selectedBlockId === block.id}
             todayIsoDate={todayIsoDate}
           />
         ))}
@@ -1649,12 +1683,14 @@ function DocumentCanvas({
 
 function DocumentBlock({
   block,
+  isSelected,
   onAddDatabaseRow,
   onDeleteBlock,
   onMoveBlock,
   onMoveBlockByKeyboard,
   onMoveDatabaseRow,
   onOpenSlash,
+  onSelectBlock,
   onSwitchDatabaseView,
   onUpdateDatabaseField,
   onUpdateDatabaseFilter,
@@ -1665,6 +1701,7 @@ function DocumentBlock({
   todayIsoDate
 }: {
   block: NodiaryBlock;
+  isSelected: boolean;
   onAddDatabaseRow: (databaseBlockId: string) => void;
   onDeleteBlock: (blockId: string) => void;
   onMoveBlock: (blockId: string, beforeBlockId: string) => void;
@@ -1685,6 +1722,7 @@ function DocumentBlock({
   ) => void;
   onUpdateDatabaseSort: (databaseBlockId: string, sort: DatabaseSort) => void;
   onOpenSlash: (anchorBlockId?: string) => void;
+  onSelectBlock: (blockId: string) => void;
   onSwitchDatabaseView: (blockId: string, view: DatabaseViewType) => void;
   onUpdateBlockText: (blockId: string, text: string) => void;
   onUpdateBlockTitle: (blockId: string, title: string) => void;
@@ -1697,8 +1735,15 @@ function DocumentBlock({
   return (
     <div
       aria-label={`블록 드롭 위치: ${getBlockLabel(block)}`}
-      className="group relative grid min-h-9 grid-cols-[28px_1fr] items-start gap-2 rounded-md"
+      className={cn(
+        "group relative grid min-h-9 grid-cols-[28px_1fr] items-start gap-2 rounded-md",
+        isSelected && "bg-[var(--nodiary-selected)]/60"
+      )}
+      data-block-id={block.id}
+      data-selected={isSelected ? "true" : "false"}
       data-testid="document-block"
+      onFocusCapture={() => onSelectBlock(block.id)}
+      onMouseDown={() => onSelectBlock(block.id)}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault();
@@ -2782,7 +2827,7 @@ function AiOperatorPanel({
         </div>
         <div className="flex items-center gap-1">
           <span className="rounded bg-[var(--nodiary-accent-soft)] px-2 py-1 text-[11px] font-medium text-[var(--nodiary-accent)]">
-            승인 후 실행
+            바로 적용
           </span>
           <button
             aria-label="AI 패널 닫기"
@@ -2824,7 +2869,7 @@ function AiOperatorPanel({
             onSend();
           }
         }}
-        placeholder="예: 이 페이지를 더 날카로운 실행 계획으로 다듬어줘. 캘린더 충돌은 승인 큐에 올려."
+        placeholder="예: 이 페이지를 더 날카로운 실행 계획으로 다듬어줘. 캘린더 일정은 바로 반영해."
         value={aiInput}
       />
       {notice ? (
@@ -2866,7 +2911,7 @@ function AiOperatorPanel({
       <section className="mt-4 rounded-md border border-[var(--nodiary-border-strong)] bg-[var(--nodiary-panel)] px-3 py-3">
         <div className="flex items-center justify-between">
           <div className="text-[13px] font-semibold text-[var(--nodiary-text)]">
-            답변 및 승인 대기
+            답변 및 실행 결과
           </div>
           <button
             className="flex h-7 items-center gap-1 rounded px-2 text-[12px] text-[var(--nodiary-muted)] hover:bg-[var(--nodiary-hover)]"
@@ -2948,7 +2993,7 @@ function AiOperatorPanel({
           ))}
           {pendingActions.length === 0 && answerRuns.length === 0 && !requestStatus ? (
             <div className="rounded border border-dashed border-[var(--nodiary-border-strong)] px-3 py-4 text-[12px] leading-5 text-[var(--nodiary-muted-soft)]">
-              질문은 답변으로 남기고, 문서 변경안과 일정 변경안은 승인 큐로 올립니다.
+              질문은 답변으로 남기고, 문서 변경과 일정 변경은 바로 반영합니다. 필요하면 되돌리세요.
             </div>
           ) : null}
           {pendingActions.map((action) => (
@@ -3738,14 +3783,15 @@ function storeCaptures(items: CapturedItem[]) {
 
 function buildAiContextSnapshot(
   state: NodiaryState,
-  enabledScopes: AiContextScope[]
+  enabledScopes: AiContextScope[],
+  selectedBlockId?: string
 ): AiContextSnapshot {
   return {
     pageTitle: enabledScopes.includes("currentPage")
       ? state.activePage.title
       : "Nodiary",
     selectedText: enabledScopes.includes("selectedBlock")
-      ? getSelectedBlockContext(state)
+      ? getSelectedBlockContext(state, selectedBlockId)
       : "",
     memory: enabledScopes.includes("longTermMemory")
       ? state.ai.memories.map((memory) => memory.content)
@@ -3759,15 +3805,22 @@ function buildAiContextSnapshot(
   };
 }
 
-function getSelectedBlockContext(state: NodiaryState) {
+function getSelectedBlockContext(
+  state: NodiaryState,
+  selectedBlockId?: string
+) {
+  const aiRequestBlock = findPendingAiRequestBlock(state);
+  const targetBlockId = aiRequestBlock?.aiTargetBlockId ?? selectedBlockId;
   const selectedBlock =
-    findPendingAiRequestBlock(state) ??
-    state.activePage.blocks.find((block) => block.id === "memo-body") ??
-    state.activePage.blocks.find((block) => block.type === "paragraph") ??
-    state.activePage.blocks[0];
+    state.activePage.blocks.find((block) => block.id === targetBlockId) ??
+    (aiRequestBlock && !aiRequestBlock.aiTargetBlockId ? aiRequestBlock : undefined);
+
+  if (!selectedBlock) {
+    return "";
+  }
 
   return [
-    selectedBlock ? `Block ID: ${selectedBlock.id}` : undefined,
+    `Block ID: ${selectedBlock.id}`,
     selectedBlock?.title,
     selectedBlock?.text
   ]
@@ -3806,6 +3859,14 @@ function shouldAnswerDirectly(command: string) {
   }
 
   if (normalized.includes("?")) {
+    if (isReflectiveAiQuestion(normalized)) {
+      return true;
+    }
+
+    if (isMutatingAiCommand(normalized)) {
+      return false;
+    }
+
     return true;
   }
 
@@ -3850,6 +3911,20 @@ function isMutatingAiCommand(command: string) {
   ].some((token) => command.includes(token));
 }
 
+function isReflectiveAiQuestion(command: string) {
+  if (!command.includes("?")) {
+    return false;
+  }
+
+  return (
+    ["왜", "의도", "꼭", "만든", "거야", "뭐야", "무엇"].some((token) =>
+      command.includes(token)
+    ) && !["해줘", "줘?", "옮겨", "수정", "추가", "삭제", "바꿔"].some((token) =>
+      command.includes(token)
+    )
+  );
+}
+
 function createLocalAiAnswer(
   command: string,
   modelRoute: AiModelRoute,
@@ -3862,7 +3937,7 @@ function createLocalAiAnswer(
   }
 
   if (command.includes("의도") || command.includes("노디") || command.includes("Nodiary")) {
-    return "Nodiary의 AI는 꼭 앱에 변경을 반영하기 위해서만 있는 것이 아닙니다. 질문에는 답변으로 돌려주고, 문서나 캘린더를 바꾸는 요청만 승인 카드로 정리해서 사용자가 승인할 때 반영합니다.";
+    return "Nodiary의 AI는 꼭 앱에 변경을 반영하기 위해서만 있는 것이 아닙니다. 질문에는 답변으로 돌려주고, 문서나 캘린더를 바꾸는 요청은 현재 화면에 바로 반영하며 필요하면 되돌릴 수 있습니다.";
   }
 
   if (command.includes("꽃")) {
@@ -3879,7 +3954,7 @@ function createLocalAiAnswer(
     return `선택한 컨텍스트 기준으로 읽었습니다. ${contextLines.join(" ")}`;
   }
 
-  return "질문에는 답변으로 돌려주고, 문서나 캘린더를 바꾸는 요청만 승인 카드로 올립니다. 변경을 원하면 무엇을 바꿀지 말해주면 승인 전에 요약해서 보여드릴게요.";
+  return "질문에는 답변으로 돌려주고, 문서나 캘린더를 바꾸는 요청은 현재 화면에 바로 반영합니다. 변경을 원하면 어디를 어떻게 바꿀지 말해주세요.";
 }
 
 function createCalendarContextAnswer(context: AiContextSnapshot) {

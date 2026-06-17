@@ -219,6 +219,13 @@ function isValidBlock(block: unknown) {
     return false;
   }
 
+  if (
+    candidate.aiTargetBlockId !== undefined &&
+    !isValidId(candidate.aiTargetBlockId)
+  ) {
+    return false;
+  }
+
   return candidate.database ? isValidDatabaseBlock(candidate.database) : true;
 }
 

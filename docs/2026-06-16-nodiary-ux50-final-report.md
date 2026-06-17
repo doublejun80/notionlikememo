@@ -322,3 +322,40 @@
 - Latest page/delete/AI QA artifacts outside the repo:
   - `/tmp/nodiary-delete-ai-qa/electron-page-delete-ai-approval.png`
   - `/tmp/nodiary-delete-ai-qa/electron-results.json`
+
+## 2026-06-18 AI Immediate Apply and Markdown Hotfix
+
+추가 수정:
+
+- 5개 개발자 하네스 축으로 AI 적용 흐름을 재점검했다.
+  - 의도 라우팅: 질문과 변경 명령을 분리하고, `옮겨/수정/추가/삭제` 같은 명령은 답변으로 빠지지 않게 했다.
+  - 선택 블록: 실제 클릭/포커스된 block id를 추적해 AI payload의 `selectedText`에 해당 `Block ID`를 보낸다.
+  - AI request block: `/ai`로 만든 placeholder가 원래 편집 대상 block id를 `aiTargetBlockId`로 보관한다.
+  - 즉시 적용: operator/local fallback 변경안은 승인 버튼 없이 바로 문서/캘린더에 반영하고, undo log는 유지한다.
+  - Markdown 방어: AI 답변, `updateBlock` text/content/title, fallback diff text를 문서 state 진입 전에 plain text로 정리한다.
+- 중앙 문서에 붙는 direct answer block은 `AI 답변:` 같은 시스템 라벨 없이 답변 본문만 남긴다.
+- Right AI panel copy를 현재 동작에 맞게 `바로 적용`, `답변 및 실행 결과`로 바꿨다.
+- OpenAI operator prompt는 Markdown이 아닌 plain document text를 요구한다.
+- Workspace API와 repository hydrate/save가 `aiTargetBlockId`를 validate/serialize/deserialize한다.
+
+추가 검증:
+
+- `npm test`: 13 files, 119 tests passed.
+- `npm run typecheck`: passed.
+- `npm run lint`: passed.
+- `npm run build`: passed.
+- `CSC_IDENTITY_AUTO_DISCOVERY=false npm run electron:pack`: passed.
+- `npm audit --audit-level=moderate`: 0 vulnerabilities.
+- Playwright Electron QA:
+  - Browser plugin unavailable, regular Playwright Electron used.
+  - `next start` on `127.0.0.1:3010` with a test session token.
+  - Mocked `/api/ai/operator` returned Markdown-formatted text.
+  - direct answer central callout visible with answer body only.
+  - AI request placeholder count: `0`.
+  - approval button count: `0`.
+  - Markdown marker count (`##`/`**`): `0`.
+  - `memo-body` changed to `꽃의 정의 꽃은 식물의 번식 기관으로, 씨앗을 만들기 위해 피는 구조입니다.`
+  - console/page errors: `0`.
+- Latest AI immediate QA artifacts outside the repo:
+  - `/tmp/nodiary-ai-immediate-qa/electron-ai-immediate.png`
+  - `/tmp/nodiary-ai-immediate-qa/result.json`

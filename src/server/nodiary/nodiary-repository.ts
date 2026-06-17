@@ -223,7 +223,8 @@ function serializeBlockContent(block: NodiaryBlock) {
   return {
     title: block.title ?? null,
     text: block.text ?? null,
-    database: block.database ?? null
+    database: block.database ?? null,
+    aiTargetBlockId: block.aiTargetBlockId ?? null
   };
 }
 
@@ -237,7 +238,8 @@ function deserializeBlock(record: BlockRecord): NodiaryBlock {
     title: readString(content.title),
     text: readString(content.text),
     checked: Boolean(record.checked),
-    database: database ?? undefined
+    database: database ?? undefined,
+    aiTargetBlockId: readString(content.aiTargetBlockId)
   };
 }
 
